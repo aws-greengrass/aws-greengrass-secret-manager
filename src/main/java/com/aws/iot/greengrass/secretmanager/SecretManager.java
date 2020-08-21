@@ -13,6 +13,7 @@ import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.regex.Pattern;
 import javax.inject.Inject;
 
@@ -23,14 +24,14 @@ public class SecretManager {
                     + "[a-zA-Z0-9/_+=,.@\\-]+-[a-zA-Z0-9]+";
     private final Logger logger = LogManager.getLogger(SecretManager.class);
     // Cache which holds aws secrets result
-    private Map<String, GetSecretValueResponse> cache = new HashMap<>();
-    private Map<String, String> nametoArnMap = new HashMap<>();
+    private ConcurrentHashMap<String, GetSecretValueResponse> cache = new ConcurrentHashMap<>();
+    private ConcurrentHashMap<String, String> nametoArnMap = new ConcurrentHashMap<>();
 
-    private final AWSClient secretClient;
+    private final AWSSecretClient secretClient;
     private final SecretDao secretDao;
 
     @Inject
-    SecretManager(AWSClient secretClient, MemorySecretDao dao) {
+    SecretManager(AWSSecretClient secretClient, MemorySecretDao dao) {
         this.secretDao = dao;
         this.secretClient = secretClient;
     }

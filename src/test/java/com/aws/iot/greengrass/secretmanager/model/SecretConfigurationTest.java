@@ -1,6 +1,9 @@
 package com.aws.iot.greengrass.secretmanager.model;
 
+import com.aws.iot.evergreen.testcommons.testutilities.EGExtension;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.extension.ExtendWith;
+import org.mockito.junit.jupiter.MockitoExtension;
 
 import java.util.Arrays;
 
@@ -9,7 +12,8 @@ import static org.hamcrest.Matchers.hasItem;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 
-public class SecretConfigurationTest {
+@ExtendWith({MockitoExtension.class, EGExtension.class})
+class SecretConfigurationTest {
 
     @Test
     void GIVEN_secret_builder_WHEN_called_THEN_secret_created() {

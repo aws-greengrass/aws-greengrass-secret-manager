@@ -3,6 +3,7 @@ package com.aws.iot.greengrass.secretmanager;
 import com.aws.iot.evergreen.testcommons.testutilities.EGExtension;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
+import org.mockito.junit.jupiter.MockitoExtension;
 import software.amazon.awssdk.services.secretsmanager.model.GetSecretValueResponse;
 
 import java.time.Instant;
@@ -11,7 +12,7 @@ import java.util.UUID;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
-@ExtendWith(EGExtension.class)
+@ExtendWith({MockitoExtension.class, EGExtension.class})
 class MemorySecretDaoTest {
 
     private final static String SECRET_NAME = "secretA";

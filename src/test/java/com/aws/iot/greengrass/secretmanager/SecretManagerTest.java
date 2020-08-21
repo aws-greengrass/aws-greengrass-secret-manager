@@ -42,7 +42,7 @@ class SecretManagerTest {
     private static final String ARN_2 = "arn:aws:secretsmanager:us-east-1:111136977227:secret:shhhhh-32lYsd";
 
     @Mock
-    private AWSClient mockAWSClient;
+    private AWSSecretClient mockAWSSecretClient;
 
     @Mock
     private MemorySecretDao mockDao;
@@ -72,10 +72,10 @@ class SecretManagerTest {
         daoReturnList.add(result1);
         daoReturnList.add(result2);
 
-        when(mockAWSClient.getSecret(any())).thenReturn(result1).thenReturn(result2);
+        when(mockAWSSecretClient.getSecret(any())).thenReturn(result1).thenReturn(result2);
         when(mockDao.getAll()).thenReturn(daoReturnList);
 
-        SecretManager sm = new SecretManager(mockAWSClient, mockDao);
+        SecretManager sm = new SecretManager(mockAWSSecretClient, mockDao);
         sm.syncFromCloud(getMockSecrets());
 
         verify(mockDao, times(1)).save(ARN_1, result1);
@@ -146,15 +146,15 @@ class SecretManagerTest {
 
     @Test
     void GIVEN_secret_manager_WHEN_cloud_errors_THEN_secrets_are_not_loaded() throws Exception {
-        when(mockAWSClient.getSecret(any())).thenThrow(SecretManagerException.class);
-        SecretManager sm = new SecretManager(mockAWSClient, mockDao);
+        when(mockAWSSecretClient.getSecret(any())).thenThrow(SecretManagerException.class);
+        SecretManager sm = new SecretManager(mockAWSSecretClient, mockDao);
         sm.syncFromCloud(getMockSecrets());
         verify(mockDao, never()).save(any(), any());
     }
 
     @Test
     void GIVEN_secret_manager_WHEN_get_called_with_invalid_request_THEN_proper_errors_are_returned() throws Exception {
-        SecretManager sm = new SecretManager(mockAWSClient, mockDao);
+        SecretManager sm = new SecretManager(mockAWSSecretClient, mockDao);
         GetSecretValueRequest request = GetSecretValueRequest.builder().build();
         GetSecretValueResult response = sm.getSecret(request);
         assertEquals(SecretResponseStatus.InvalidRequest, response.getStatus());

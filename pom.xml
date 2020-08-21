@@ -15,71 +15,82 @@
             <url>https://d10d248laylpoq.cloudfront.net</url>
         </repository>
     </repositories>
+    <dependencyManagement>
+        <dependencies>
+            <dependency>
+                <groupId>software.amazon.awssdk</groupId>
+                <artifactId>bom</artifactId>
+                <version>2.10.89</version>
+                <type>pom</type>
+                <scope>import</scope>
+            </dependency>
+        </dependencies>
+    </dependencyManagement>
     <build>
         <plugins>
             <plugin>
-            <groupId>org.jacoco</groupId>
-            <artifactId>jacoco-maven-plugin</artifactId>
-            <version>0.8.5</version>
-            <configuration>
-                <excludes>
-                    <exclude>**/*Exception*</exclude>
-                </excludes>
-                <propertyName>surefire.argLine</propertyName>
-            </configuration>
-            <executions>
-            <execution>
-                <id>pre-unit-test</id>
-                <goals>
-                    <goal>prepare-agent</goal>
-                </goals>
-            </execution>
-            <execution>
-                <id>post-unit-test</id>
-                <phase>test</phase>
-                <goals>
-                    <goal>report</goal>
-                </goals>
-            </execution>
-            <execution>
-                <id>unit-test-report</id>
-                <phase>verify</phase>
-                <goals>
-                    <goal>report</goal>
-                </goals>
+                <groupId>org.jacoco</groupId>
+                <artifactId>jacoco-maven-plugin</artifactId>
+                <version>0.8.5</version>
                 <configuration>
-                    <dataFile>${project.build.directory}/jacoco.exec</dataFile>
-                    <outputDirectory>target/jacoco-report</outputDirectory>
+                    <excludes>
+                        <exclude>**/*Exception*</exclude>
+                    </excludes>
+                    <propertyName>surefire.argLine</propertyName>
                 </configuration>
-            </execution>
-            <execution>
-            <id>jacoco-check-unit-test</id>
-            <phase>verify</phase>
-            <goals>
-                <goal>check</goal>
-            </goals>
-            <configuration>
-            <dataFile>${project.build.directory}/jacoco.exec</dataFile>
-            <rules>
-            <rule>
-            <element>BUNDLE</element>
-                <limits>
-                    <limit>
-                        <counter>INSTRUCTION</counter>
-                        <value>COVEREDRATIO</value>
-                        <minimum>0.82</minimum>
-                    </limit>
-                    <limit>
-                        <counter>BRANCH</counter>
-                        <value>COVEREDRATIO</value>
-                        <minimum>0.68</minimum>
-                    </limit>
-                </limits>
-            </rule>
-            </rules>
-            </configuration>
-            </execution>
-            </executions>
+                <executions>
+                    <execution>
+                        <id>pre-unit-test</id>
+                        <goals>
+                            <goal>prepare-agent</goal>
+                        </goals>
+                    </execution>
+                    <execution>
+                        <id>post-unit-test</id>
+                        <phase>test</phase>
+                        <goals>
+                            <goal>report</goal>
+                        </goals>
+                    </execution>
+                    <execution>
+                        <id>unit-test-report</id>
+                        <phase>verify</phase>
+                        <goals>
+                            <goal>report</goal>
+                        </goals>
+                        <configuration>
+                            <dataFile>${project.build.directory}/jacoco.exec</dataFile>
+                            <outputDirectory>target/jacoco-report</outputDirectory>
+                        </configuration>
+                    </execution>
+                    <execution>
+                        <id>jacoco-check-unit-test</id>
+                        <phase>verify</phase>
+                        <goals>
+                            <goal>check</goal>
+                        </goals>
+                        <configuration>
+                            <dataFile>${project.build.directory}/jacoco.exec</dataFile>
+                            <rules>
+                                <rule>
+                                    <element>BUNDLE</element>
+                                    <limits>
+                                        <limit>
+                                            <counter>INSTRUCTION</counter>
+                                            <value>COVEREDRATIO</value>
+                                            <minimum>0.82</minimum>
+                                        </limit>
+                                        <limit>
+                                            <counter>BRANCH</counter>
+                                            <value>COVEREDRATIO</value>
+                                            <minimum>0.68</minimum>
+                                        </limit>
+                                    </limits>
+                                </rule>
+                            </rules>
+                        </configuration>
+                    </execution>
+                </executions>
             </plugin>
             <plugin>
                 <groupId>org.apache.maven.plugins</groupId>
@@ -91,17 +102,17 @@
                 </configuration>
             </plugin>
             <plugin>
-            <artifactId>maven-surefire-plugin</artifactId>
-            <version>3.0.0-M5</version>
-            <configuration>
-                <trimStackTrace>false</trimStackTrace>
-                <argLine>${surefire.argLine} -Xms1m</argLine>
-                <properties>
-                    <configurationParameters>
-                        junit.jupiter.execution.timeout.default = 5m
-                    </configurationParameters>
-                </properties>
-            </configuration>
+                <artifactId>maven-surefire-plugin</artifactId>
+                <version>3.0.0-M5</version>
+                <configuration>
+                    <trimStackTrace>false</trimStackTrace>
+                    <argLine>${surefire.argLine} -Xms1m</argLine>
+                    <properties>
+                        <configurationParameters>
+                            junit.jupiter.execution.timeout.default = 5m
+                        </configurationParameters>
+                    </properties>
+                </configuration>
             </plugin>
             <plugin>
                 <artifactId>maven-checkstyle-plugin</artifactId>
@@ -145,7 +156,6 @@
                             <transformers>
                                 <transformer
                                         implementation="org.apache.maven.plugins.shade.resource.ManifestResourceTransformer">
-                                    <mainClass>com.aws.iot.evergreen.easysetup.EvergreenSetup</mainClass>
                                 </transformer>
                                 <transformer
                                         implementation="org.apache.maven.plugins.shade.resource.ServicesResourceTransformer"/>
@@ -186,12 +196,12 @@
         <secretmanagerjar.name>SecretManager</secretmanagerjar.name>
     </properties>
     <dependencies>
-    <dependency>
-        <groupId>com.aws.iot</groupId>
-        <artifactId>evergreen-kernel</artifactId>
-        <version>1.0-SNAPSHOT</version>
-        <scope>provided</scope>
-    </dependency>
+        <dependency>
+            <groupId>com.aws.iot</groupId>
+            <artifactId>evergreen-kernel</artifactId>
+            <version>1.0-SNAPSHOT</version>
+            <scope>provided</scope>
+        </dependency>
         <dependency>
             <groupId>org.projectlombok</groupId>
             <artifactId>lombok</artifactId>
@@ -207,7 +217,6 @@
         <dependency>
             <groupId>software.amazon.awssdk</groupId>
             <artifactId>secretsmanager</artifactId>
-            <version>2.14.1</version>
         </dependency>
         <dependency>
             <groupId>org.mockito</groupId>

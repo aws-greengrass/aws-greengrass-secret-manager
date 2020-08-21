@@ -15,7 +15,7 @@ import software.amazon.awssdk.services.secretsmanager.model.ResourceNotFoundExce
 
 import javax.inject.Inject;
 
-public class AWSClient {
+public class AWSSecretClient {
 
     private final SecretsManagerClient secretsManagerClient;
 
@@ -24,13 +24,13 @@ public class AWSClient {
      * @param credentialProvider TES credential provider
      */
     @Inject
-    public AWSClient(LazyCredentialProvider credentialProvider) {
+    public AWSSecretClient(LazyCredentialProvider credentialProvider) {
         this.secretsManagerClient = SecretsManagerClient.builder().credentialsProvider(credentialProvider)
                 .build();
     }
 
     // Constructor used for testing.
-    AWSClient(SecretsManagerClient secretsManager) {
+    AWSSecretClient(SecretsManagerClient secretsManager) {
         this.secretsManagerClient = secretsManager;
     }
 
