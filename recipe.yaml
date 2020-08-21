@@ -1,0 +1,18 @@
+---
+RecipeTemplateVersion: '2020-01-25'
+ComponentName: aws.greengrass.secret.manager
+Description: AWS Greengrass Secret Manager
+Publisher: AWS
+Version: '0.0.0'
+ComponentType: plugin
+Parameters:
+Lifecycle:
+Platforms:
+  - linux
+  - ubuntu
+  - debian
+  - fedora
+  - raspbian
+Artifacts:
+  all:
+    - greengrass:aws.greengrass.secret.manager.jar

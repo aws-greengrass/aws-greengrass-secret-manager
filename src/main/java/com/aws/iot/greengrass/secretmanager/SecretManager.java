@@ -41,7 +41,7 @@ public class SecretManager {
      * @param configuredSecrets List of secrets that are to be downloaded
      */
     public void syncFromCloud(List<SecretConfiguration> configuredSecrets) {
-        for (SecretConfiguration secretConfig: configuredSecrets) {
+        for (SecretConfiguration secretConfig : configuredSecrets) {
             String secretArn = secretConfig.getArn();
             if (!Pattern.matches(VALID_SECRET_ARN_PATTERN, secretArn)) {
                 logger.atWarn().kv("Secret ", secretArn).log("Skipping invalid secret arn configured");
@@ -53,7 +53,7 @@ public class SecretManager {
                 labelsToDownload.addAll(secretConfig.getLabels());
             }
             labelsToDownload.add(LATEST_LABEL);
-            for (String label: labelsToDownload) {
+            for (String label : labelsToDownload) {
                 GetSecretValueRequest request = GetSecretValueRequest.builder().secretId(secretArn)
                         .versionStage(label).build();
                 try {
@@ -79,7 +79,7 @@ public class SecretManager {
     public void loadSecretsFromLocalStore() {
         // read the db
         List<GetSecretValueResponse> secrets = secretDao.getAll();
-        for (GetSecretValueResponse secretResult: secrets) {
+        for (GetSecretValueResponse secretResult : secrets) {
             nametoArnMap.put(secretResult.name(), secretResult.arn());
             loadCache(secretResult);
         }
@@ -98,7 +98,7 @@ public class SecretManager {
         cache.put(secretArn, getSecretValueResponse);
         cache.put(secretArn + getSecretValueResponse.versionId(), getSecretValueResponse);
         // load all labels attached with this version of secret
-        for (String label: getSecretValueResponse.versionStages()) {
+        for (String label : getSecretValueResponse.versionStages()) {
             cache.put(secretArn + label, getSecretValueResponse);
         }
     }
