@@ -3,6 +3,7 @@ package com.aws.iot.greengrass.secretmanager;
 import com.aws.iot.evergreen.ipc.services.secret.GetSecretValueRequest;
 import com.aws.iot.evergreen.ipc.services.secret.GetSecretValueResult;
 import com.aws.iot.evergreen.ipc.services.secret.SecretResponseStatus;
+import com.aws.iot.evergreen.testcommons.testutilities.EGExtension;
 import com.aws.iot.greengrass.secretmanager.exception.SecretManagerException;
 import com.aws.iot.greengrass.secretmanager.model.SecretConfiguration;
 import org.junit.jupiter.api.Test;
@@ -23,7 +24,7 @@ import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
-@ExtendWith({MockitoExtension.class})
+@ExtendWith({MockitoExtension.class, EGExtension.class})
 class SecretManagerTest {
     private static final String LATEST_LABEL = "AWSCURRENT";
     private static final String SECRET_NAME_1 = "Secret1";
