@@ -8,6 +8,7 @@ import com.aws.iot.greengrass.secretmanager.exception.SecretManagerException;
 import com.aws.iot.greengrass.secretmanager.model.SecretConfiguration;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
+import org.junit.jupiter.api.extension.ExtensionContext;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import software.amazon.awssdk.services.secretsmanager.model.GetSecretValueResponse;
@@ -17,6 +18,7 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.UUID;
 
+import static com.aws.iot.evergreen.testcommons.testutilities.ExceptionLogProtector.ignoreExceptionOfType;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.never;
@@ -146,7 +148,8 @@ class SecretManagerTest {
     }
 
     @Test
-    void GIVEN_secret_manager_WHEN_cloud_errors_THEN_secrets_are_not_loaded() throws Exception {
+    void GIVEN_secret_manager_WHEN_cloud_errors_THEN_secrets_are_not_loaded(ExtensionContext context) throws Exception {
+        ignoreExceptionOfType(context, SecretManagerException.class);
         when(mockAWSSecretClient.getSecret(any())).thenThrow(SecretManagerException.class);
         SecretManager sm = new SecretManager(mockAWSSecretClient, mockDao);
         sm.syncFromCloud(getMockSecrets());
