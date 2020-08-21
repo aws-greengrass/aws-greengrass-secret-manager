@@ -1,23 +1,23 @@
 package com.aws.iot.greengrass.secretmanager;
 
-import com.amazonaws.services.secretsmanager.AWSSecretsManager;
-import com.amazonaws.services.secretsmanager.AWSSecretsManagerClientBuilder;
-import com.amazonaws.services.secretsmanager.model.DecryptionFailureException;
-import com.amazonaws.services.secretsmanager.model.GetSecretValueRequest;
-import com.amazonaws.services.secretsmanager.model.GetSecretValueResult;
-import com.amazonaws.services.secretsmanager.model.InternalServiceErrorException;
-import com.amazonaws.services.secretsmanager.model.InvalidParameterException;
-import com.amazonaws.services.secretsmanager.model.InvalidRequestException;
-import com.amazonaws.services.secretsmanager.model.ResourceNotFoundException;
+import com.aws.iot.evergreen.ipc.services.secret.GetSecretValueResult;
 import com.aws.iot.evergreen.tes.LazyCredentialProvider;
 import com.aws.iot.evergreen.util.Utils;
 import com.aws.iot.greengrass.secretmanager.exception.SecretManagerException;
+import software.amazon.awssdk.services.secretsmanager.SecretsManagerClient;
+import software.amazon.awssdk.services.secretsmanager.model.DecryptionFailureException;
+import software.amazon.awssdk.services.secretsmanager.model.GetSecretValueRequest;
+import software.amazon.awssdk.services.secretsmanager.model.GetSecretValueResponse;
+import software.amazon.awssdk.services.secretsmanager.model.InternalServiceErrorException;
+import software.amazon.awssdk.services.secretsmanager.model.InvalidParameterException;
+import software.amazon.awssdk.services.secretsmanager.model.InvalidRequestException;
+import software.amazon.awssdk.services.secretsmanager.model.ResourceNotFoundException;
 
 import javax.inject.Inject;
 
 public class AWSClient {
 
-    private final AWSSecretsManager secretsManagerClient;
+    private final SecretsManagerClient secretsManagerClient;
 
     /**
      * Constructor which utilized TES for initializing AWS client.
@@ -25,14 +25,12 @@ public class AWSClient {
      */
     @Inject
     public AWSClient(LazyCredentialProvider credentialProvider) {
-        this.secretsManagerClient = AWSSecretsManagerClientBuilder
-                .standard()
-                .withCredentials(credentialProvider)
+        this.secretsManagerClient = SecretsManagerClient.builder().credentialsProvider(credentialProvider)
                 .build();
     }
 
     // Constructor used for testing.
-    AWSClient(AWSSecretsManager secretsManager) {
+    AWSClient(SecretsManagerClient secretsManager) {
         this.secretsManagerClient = secretsManager;
     }
 
@@ -42,11 +40,11 @@ public class AWSClient {
      * @return AWS secret response
      * @throws SecretManagerException If there is a problem fetching secret
      */
-    public GetSecretValueResult getSecret(GetSecretValueRequest request) throws SecretManagerException {
+    public GetSecretValueResponse getSecret(GetSecretValueRequest request) throws SecretManagerException {
         // TODO: Add retry for fetches
         validateInput(request);
         String errorMsg = String.format("Exception occurred while fetching secrets from AWSSecretsManager for key %s",
-                request.getSecretId());
+                request.secretId());
         try {
             return secretsManagerClient.getSecretValue(request);
         } catch (InternalServiceErrorException
@@ -59,11 +57,11 @@ public class AWSClient {
     }
 
     private void validateInput(GetSecretValueRequest request) throws IllegalArgumentException {
-        if (Utils.isEmpty(request.getSecretId())) {
+        if (Utils.isEmpty(request.secretId())) {
             throw new IllegalArgumentException("Invalid secret request, secret id is required");
         }
 
-        if (Utils.isEmpty(request.getVersionId()) && Utils.isEmpty(request.getVersionStage())) {
+        if (Utils.isEmpty(request.versionId()) && Utils.isEmpty(request.versionStage())) {
             throw new IllegalArgumentException("Invalid secret request, either version Id or stage is required");
         }
     }

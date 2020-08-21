@@ -1,12 +1,12 @@
 package com.aws.iot.greengrass.secretmanager;
 
-import com.amazonaws.services.secretsmanager.model.GetSecretValueRequest;
-import com.amazonaws.services.secretsmanager.model.GetSecretValueResult;
 import com.aws.iot.evergreen.ipc.services.secret.SecretResponseStatus;
 import com.aws.iot.evergreen.logging.api.Logger;
 import com.aws.iot.evergreen.logging.impl.LogManager;
 import com.aws.iot.evergreen.util.Utils;
 import com.aws.iot.greengrass.secretmanager.model.SecretConfiguration;
+import software.amazon.awssdk.services.secretsmanager.model.GetSecretValueRequest;
+import software.amazon.awssdk.services.secretsmanager.model.GetSecretValueResponse;
 
 import java.util.HashMap;
 import java.util.HashSet;
@@ -23,7 +23,7 @@ public class SecretManager {
                     + "[a-zA-Z0-9/_+=,.@\\-]+-[a-zA-Z0-9]+";
     private final Logger logger = LogManager.getLogger(SecretManager.class);
     // Cache which holds aws secrets result
-    private Map<String, GetSecretValueResult> cache = new HashMap<>();
+    private Map<String, GetSecretValueResponse> cache = new HashMap<>();
     private Map<String, String> nametoArnMap = new HashMap<>();
 
     private final AWSClient secretClient;
@@ -54,10 +54,10 @@ public class SecretManager {
             }
             labelsToDownload.add(LATEST_LABEL);
             for (String label: labelsToDownload) {
-                GetSecretValueRequest request = new GetSecretValueRequest().withSecretId(secretArn)
-                        .withVersionStage(label);
+                GetSecretValueRequest request = GetSecretValueRequest.builder().secretId(secretArn)
+                        .versionStage(label).build();
                 try {
-                    GetSecretValueResult result = secretClient.getSecret(request);
+                    GetSecretValueResponse result = secretClient.getSecret(request);
                     // Save the secrets to local store for offline access
                     // TODO: Move to persistent storage
                     // TODO: Support encrypted secrets
@@ -78,9 +78,9 @@ public class SecretManager {
      */
     public void loadSecretsFromLocalStore() {
         // read the db
-        List<GetSecretValueResult> secrets = secretDao.getAll();
-        for (GetSecretValueResult secretResult: secrets) {
-            nametoArnMap.put(secretResult.getName(), secretResult.getARN());
+        List<GetSecretValueResponse> secrets = secretDao.getAll();
+        for (GetSecretValueResponse secretResult: secrets) {
+            nametoArnMap.put(secretResult.name(), secretResult.arn());
             loadCache(secretResult);
         }
     }
@@ -93,24 +93,24 @@ public class SecretManager {
     * arn1:l1 -> secret
     * arn1:l2 -> secret
     */
-    private void loadCache(GetSecretValueResult getSecretValueResult) {
-        String secretArn = getSecretValueResult.getARN();
-        cache.put(secretArn, getSecretValueResult);
-        cache.put(secretArn + getSecretValueResult.getVersionId(), getSecretValueResult);
+    private void loadCache(GetSecretValueResponse getSecretValueResponse) {
+        String secretArn = getSecretValueResponse.arn();
+        cache.put(secretArn, getSecretValueResponse);
+        cache.put(secretArn + getSecretValueResponse.versionId(), getSecretValueResponse);
         // load all labels attached with this version of secret
-        for (String label: getSecretValueResult.getVersionStages()) {
-            cache.put(secretArn + label, getSecretValueResult);
+        for (String label: getSecretValueResponse.versionStages()) {
+            cache.put(secretArn + label, getSecretValueResponse);
         }
     }
 
     private com.aws.iot.evergreen.ipc.services.secret.GetSecretValueResult
-        translateModeltoIpc(GetSecretValueResult result) {
+        translateModeltoIpc(GetSecretValueResponse response) {
         return com.aws.iot.evergreen.ipc.services.secret.GetSecretValueResult
                 .builder()
-                .secretId(result.getARN())
-                .secretString(result.getSecretString())
-                .versionId(result.getVersionId())
-                .versionStages(result.getVersionStages())
+                .secretId(response.arn())
+                .secretString(response.secretString())
+                .versionId(response.versionId())
+                .versionStages(response.versionStages())
                 .responseStatus(SecretResponseStatus.Success)
                 .build();
     }

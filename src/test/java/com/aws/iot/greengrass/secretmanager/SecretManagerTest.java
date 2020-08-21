@@ -9,10 +9,10 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
+import software.amazon.awssdk.services.secretsmanager.model.GetSecretValueResponse;
 
+import java.time.Instant;
 import java.util.ArrayList;
-import java.util.Arrays;
-import java.util.Date;
 import java.util.List;
 import java.util.UUID;
 
@@ -35,8 +35,8 @@ class SecretManagerTest {
     private static final String SECRET_VERSION_2 = UUID.randomUUID().toString();
     private static final String SECRET_LABEL_1 = "Label1";
     private static final String SECRET_LABEL_2 = "Label2";
-    private static final Date SECRET_DATE_1 = new Date();
-    private static final Date SECRET_DATE_2 = new Date();
+    private static final Instant SECRET_DATE_1 = Instant.now();
+    private static final Instant SECRET_DATE_2 = Instant.now();
 
     private static final String ARN_1 = "arn:aws:secretsmanager:us-east-1:999936977227:secret:randomSecret-74lYJh";
     private static final String ARN_2 = "arn:aws:secretsmanager:us-east-1:111136977227:secret:shhhhh-32lYsd";
@@ -58,18 +58,17 @@ class SecretManagerTest {
 
     @Test
     void GIVEN_secret_manager_WHEN_sync_from_cloud_THEN_secrets_are_loaded() throws Exception {
-        com.amazonaws.services.secretsmanager.model.GetSecretValueResult result1 =
-                new com.amazonaws.services.secretsmanager.model.GetSecretValueResult().withName(SECRET_NAME_1)
-                        .withARN(ARN_1).withCreatedDate(SECRET_DATE_1).withSecretString(SECRET_VALUE_1).withVersionId(SECRET_VERSION_1)
-                        .withVersionStages(Arrays.asList(new String[]{LATEST_LABEL, SECRET_LABEL_1}));
+        GetSecretValueResponse result1 =
+                GetSecretValueResponse.builder().name(SECRET_NAME_1)
+                        .arn(ARN_1).createdDate(SECRET_DATE_1).secretString(SECRET_VALUE_1).versionId(SECRET_VERSION_1)
+                        .versionStages(new String[]{LATEST_LABEL, SECRET_LABEL_1}).build();
 
-        com.amazonaws.services.secretsmanager.model.GetSecretValueResult result2 =
-                new com.amazonaws.services.secretsmanager.model.GetSecretValueResult().withName(SECRET_NAME_2)
-                        .withARN(ARN_2).withCreatedDate(SECRET_DATE_2).withSecretString(SECRET_VALUE_2).withVersionId(SECRET_VERSION_2)
-                        .withVersionStages(Arrays.asList(new String[]{LATEST_LABEL, SECRET_LABEL_2}));
+        GetSecretValueResponse result2 =
+                GetSecretValueResponse.builder().name(SECRET_NAME_2)
+                        .arn(ARN_2).createdDate(SECRET_DATE_2).secretString(SECRET_VALUE_2).versionId(SECRET_VERSION_2)
+                        .versionStages(new String[]{LATEST_LABEL, SECRET_LABEL_2}).build();
 
-        List<com.amazonaws.services.secretsmanager.model.GetSecretValueResult> daoReturnList =
-                new ArrayList<>();
+        List<GetSecretValueResponse> daoReturnList = new ArrayList<>();
         daoReturnList.add(result1);
         daoReturnList.add(result2);
 
@@ -174,18 +173,17 @@ class SecretManagerTest {
         assertEquals("Secret not found " + ARN_1, response.getErrorMessage());
 
         // Now add 2 secrets to the store
-        com.amazonaws.services.secretsmanager.model.GetSecretValueResult result1 =
-                new com.amazonaws.services.secretsmanager.model.GetSecretValueResult().withName(SECRET_NAME_1)
-                        .withARN(ARN_1).withCreatedDate(SECRET_DATE_1).withSecretString(SECRET_VALUE_1).withVersionId(SECRET_VERSION_1)
-                        .withVersionStages(Arrays.asList(new String[]{LATEST_LABEL, SECRET_LABEL_1}));
+        GetSecretValueResponse result1 =
+                GetSecretValueResponse.builder().name(SECRET_NAME_1)
+                        .arn(ARN_1).createdDate(SECRET_DATE_1).secretString(SECRET_VALUE_1).versionId(SECRET_VERSION_1)
+                        .versionStages(new String[]{LATEST_LABEL, SECRET_LABEL_1}).build();
 
-        com.amazonaws.services.secretsmanager.model.GetSecretValueResult result2 =
-                new com.amazonaws.services.secretsmanager.model.GetSecretValueResult().withName(SECRET_NAME_2)
-                        .withARN(ARN_2).withCreatedDate(SECRET_DATE_2).withSecretString(SECRET_VALUE_2).withVersionId(SECRET_VERSION_2)
-                        .withVersionStages(Arrays.asList(new String[]{LATEST_LABEL, SECRET_LABEL_2}));
+        GetSecretValueResponse result2 =
+                GetSecretValueResponse.builder().name(SECRET_NAME_2)
+                        .arn(ARN_2).createdDate(SECRET_DATE_2).secretString(SECRET_VALUE_2).versionId(SECRET_VERSION_2)
+                        .versionStages(new String[]{LATEST_LABEL, SECRET_LABEL_2}).build();
 
-        List<com.amazonaws.services.secretsmanager.model.GetSecretValueResult> daoReturnList =
-                new ArrayList<>();
+        List<GetSecretValueResponse> daoReturnList = new ArrayList<>();
         daoReturnList.add(result1);
         daoReturnList.add(result2);
         when(mockDao.getAll()).thenReturn(daoReturnList);

@@ -27,13 +27,14 @@ import java.util.concurrent.Future;
 import java.util.stream.Collectors;
 import javax.inject.Inject;
 
+import static com.aws.iot.evergreen.deployment.bootstrap.BootstrapSuccessCode.REQUEST_RESTART;
 import static com.aws.iot.evergreen.packagemanager.KernelConfigResolver.PARAMETERS_CONFIG_KEY;
 
 @ImplementsService(name = SecretManagerService.SECRET_MANAGER_SERVICE_NAME)
 public class SecretManagerService extends EvergreenService {
 
     public static final String SECRET_MANAGER_SERVICE_NAME = "aws.greengrass.secret.manager";
-    public static final String SECRETS_TOPIC = "Secrets";
+    public static final String SECRETS_TOPIC = "secrets";
     private static final ObjectMapper CBOR_MAPPER = new CBORMapper();
 
     private List<String> configuredSecrets = new ArrayList<String>();
@@ -78,9 +79,7 @@ public class SecretManagerService extends EvergreenService {
             logger.atInfo().setEventType("ipc-register-request-handler").addKeyValue("destination", destination.name())
                     .log();
         } catch (IPCException e) {
-            logger.atError().setEventType("ipc-register-request-handler-error").setCause(e)
-                    .addKeyValue("destination", destination.name())
-                    .log("Failed to register service callback to destination");
+            //TODO: validate why this is called multiple times
         }
     }
 
@@ -89,6 +88,11 @@ public class SecretManagerService extends EvergreenService {
         // TODO: Modify secret service to only provide interface to deal with downloaded
         // secrets during download phase.
         reportState(State.RUNNING);
+    }
+
+    @Override
+    public int bootstrap() {
+        return REQUEST_RESTART;
     }
 
     /**
@@ -108,6 +112,7 @@ public class SecretManagerService extends EvergreenService {
                     GetSecretValueRequest request =
                             CBOR_MAPPER.readValue(applicationMessage.getPayload(), GetSecretValueRequest.class);
                     response = secretManager.getSecret(request);
+                    response.setStatus(SecretResponseStatus.Success);
                     break;
                 default:
                     response.setStatus(SecretResponseStatus.InvalidRequest);
