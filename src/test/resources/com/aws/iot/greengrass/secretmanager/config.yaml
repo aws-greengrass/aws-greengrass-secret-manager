@@ -9,6 +9,12 @@ services:
 
   aws.greengrass.secret.manager:
     parameters:
-      secrets:
-        - arn:aws:secretsmanager:us-east-1:999936977227:secret:randomSecret-74lYJh
-        - arn:aws:secretsmanager:us-east-1:111136977227:secret:shhhhh-32lYsd
+      aws: '[
+        {
+          "arn": "arn:aws:secretsmanager:us-east-1:999936977227:secret:randomSecret-74lYJh",
+          "labels": ["new"]
+        },
+        {
+          "arn": "arn:aws:secretsmanager:us-east-1:111136977227:secret:shhhhh-32lYsd",
+          "labels": ["new"]
+        }]'

@@ -10,6 +10,7 @@ import lombok.NonNull;
 import lombok.Setter;
 import lombok.ToString;
 
+import java.time.Instant;
 import java.util.List;
 
 @JsonInclude(JsonInclude.Include.NON_NULL)
@@ -20,8 +21,17 @@ import java.util.List;
 @NoArgsConstructor
 @ToString
 @EqualsAndHashCode
-public class SecretConfiguration {
+public class AWSSecretResponse {
     @NonNull
     String arn;
-    List<String> labels;
+    @NonNull
+    String name;
+    @NonNull
+    String versionId;
+    String encryptedSecretString;
+    String encryptedSecretBytes;
+    @NonNull
+    List<String> versionStages;
+    @NonNull
+    Instant createdDate;
 }

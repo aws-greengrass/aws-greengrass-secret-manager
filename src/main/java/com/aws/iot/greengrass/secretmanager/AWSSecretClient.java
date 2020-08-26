@@ -1,6 +1,5 @@
 package com.aws.iot.greengrass.secretmanager;
 
-import com.aws.iot.evergreen.ipc.services.secret.GetSecretValueResult;
 import com.aws.iot.evergreen.tes.LazyCredentialProvider;
 import com.aws.iot.evergreen.util.Utils;
 import com.aws.iot.greengrass.secretmanager.exception.SecretManagerException;
@@ -20,7 +19,7 @@ public class AWSSecretClient {
     private final SecretsManagerClient secretsManagerClient;
 
     /**
-     * Constructor which utilized TES for initializing AWS client.
+     * Constructor which utilizes TES for initializing AWS client.
      * @param credentialProvider TES credential provider
      */
     @Inject
@@ -42,17 +41,43 @@ public class AWSSecretClient {
      */
     public GetSecretValueResponse getSecret(GetSecretValueRequest request) throws SecretManagerException {
         // TODO: Add retry for fetches
-        validateInput(request);
         String errorMsg = String.format("Exception occurred while fetching secrets from AWSSecretsManager for key %s",
                 request.secretId());
         try {
-            return secretsManagerClient.getSecretValue(request);
+            validateInput(request);
+            GetSecretValueResponse response = secretsManagerClient.getSecretValue(request);
+            validateResponse(response);
+            return response;
         } catch (InternalServiceErrorException
                 | DecryptionFailureException
                 | ResourceNotFoundException
                 | InvalidParameterException
-                | InvalidRequestException e) {
+                | InvalidRequestException
+                | IllegalArgumentException e) {
+            // TODO: Separate out network errors for retry and try hard for secret download in that case.
             throw new SecretManagerException(errorMsg);
+        }
+    }
+
+    private void validateResponse(GetSecretValueResponse response) throws IllegalArgumentException {
+        String errorStr = "Invalid secret response, %s is missing";
+        if (Utils.isEmpty(response.versionId())) {
+            throw new IllegalArgumentException(String.format(errorStr, "version Id"));
+        }
+        if (Utils.isEmpty(response.arn())) {
+            throw new IllegalArgumentException(String.format(errorStr, "arn"));
+        }
+        if (Utils.isEmpty(response.name())) {
+            throw new IllegalArgumentException(String.format(errorStr, "name"));
+        }
+        if (response.createdDate() == null) {
+            throw new IllegalArgumentException(String.format(errorStr, "Created date"));
+        }
+        if (!response.hasVersionStages() || response.versionStages().isEmpty()) {
+            throw new IllegalArgumentException(String.format(errorStr, "version stages"));
+        }
+        if (Utils.isEmpty(response.secretString()) && response.secretBinary() == null) {
+            throw new IllegalArgumentException(String.format(errorStr, "Both secret string and binary"));
         }
     }
 

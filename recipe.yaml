@@ -17,4 +17,4 @@ Platforms:
   - windows
 Artifacts:
   all:
-    - greengrass:aws.greengrass.secret.manager.jar
+    - Uri: greengrass:aws.greengrass.secret.manager.jar

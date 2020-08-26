@@ -1,12 +1,12 @@
 package com.aws.iot.greengrass.secretmanager.model;
 
 import com.fasterxml.jackson.annotation.JsonInclude;
+import com.fasterxml.jackson.annotation.JsonProperty;
 import lombok.AllArgsConstructor;
 import lombok.Builder;
 import lombok.EqualsAndHashCode;
 import lombok.Getter;
 import lombok.NoArgsConstructor;
-import lombok.NonNull;
 import lombok.Setter;
 import lombok.ToString;
 
@@ -20,8 +20,7 @@ import java.util.List;
 @NoArgsConstructor
 @ToString
 @EqualsAndHashCode
-public class SecretConfiguration {
-    @NonNull
-    String arn;
-    List<String> labels;
+public class SecretDocument {
+    @JsonProperty("Secrets")
+    List<AWSSecretResponse> secrets;
 }
