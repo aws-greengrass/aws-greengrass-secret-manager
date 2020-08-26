@@ -18,9 +18,7 @@ import com.aws.iot.greengrass.secretmanager.model.SecretDocument;
 import software.amazon.awssdk.services.secretsmanager.model.GetSecretValueRequest;
 import software.amazon.awssdk.services.secretsmanager.model.GetSecretValueResponse;
 
-import java.io.File;
 import java.nio.charset.StandardCharsets;
-import java.nio.file.Path;
 import java.security.PrivateKey;
 import java.security.PublicKey;
 import java.util.ArrayList;

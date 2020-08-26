@@ -14,7 +14,6 @@ import software.amazon.awssdk.services.secretsmanager.model.InternalServiceError
 import software.amazon.awssdk.services.secretsmanager.model.InvalidParameterException;
 import software.amazon.awssdk.services.secretsmanager.model.InvalidRequestException;
 import software.amazon.awssdk.services.secretsmanager.model.ResourceNotFoundException;
-import sun.tools.jconsole.inspector.Utils;
 
 import java.time.Instant;
 import java.util.Arrays;
