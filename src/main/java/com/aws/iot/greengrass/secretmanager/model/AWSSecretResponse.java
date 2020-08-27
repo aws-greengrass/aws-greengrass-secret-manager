@@ -3,24 +3,18 @@ package com.aws.iot.greengrass.secretmanager.model;
 import com.fasterxml.jackson.annotation.JsonInclude;
 import lombok.AllArgsConstructor;
 import lombok.Builder;
-import lombok.EqualsAndHashCode;
-import lombok.Getter;
+import lombok.Data;
 import lombok.NoArgsConstructor;
 import lombok.NonNull;
-import lombok.Setter;
-import lombok.ToString;
 
 import java.time.Instant;
 import java.util.List;
 
 @JsonInclude(JsonInclude.Include.NON_NULL)
-@Getter
-@Setter
-@Builder
+@Builder(toBuilder = true)
 @AllArgsConstructor
 @NoArgsConstructor
-@ToString
-@EqualsAndHashCode
+@Data
 public class AWSSecretResponse {
     @NonNull
     String arn;

@@ -17,6 +17,7 @@ import com.aws.iot.evergreen.ipc.services.secret.SecretGenericResponse;
 import com.aws.iot.evergreen.ipc.services.secret.SecretResponseStatus;
 import com.aws.iot.evergreen.kernel.EvergreenService;
 import com.aws.iot.evergreen.util.Coerce;
+import com.aws.iot.greengrass.secretmanager.exception.SecretManagerException;
 import com.aws.iot.greengrass.secretmanager.kernel.KernelClient;
 import com.aws.iot.greengrass.secretmanager.model.SecretConfiguration;
 import com.fasterxml.jackson.core.type.TypeReference;
@@ -84,6 +85,9 @@ public class SecretManagerService extends EvergreenService {
         } catch (IOException e) {
             logger.atWarn().kv("node", SECRETS_TOPIC).kv("value", val)
                     .log("Unable to parse secrets configured", e);
+        } catch (SecretManagerException e) {
+            logger.atWarn().kv("service", SECRET_MANAGER_SERVICE_NAME).setCause(e)
+                    .log("Unable to download secrets from cloud", e);
         }
     }
 
@@ -108,7 +112,19 @@ public class SecretManagerService extends EvergreenService {
         // By this time, secrets directory should be up, if not then db was not setup.
         Path secretDirectory = root.resolve(FileSecretDao.SECRETS_DIR);
         if (!Files.exists(secretDirectory)) {
-            serviceErrored("Could not set up directories for service");
+            serviceErrored("Secrets directory is missing");
+            return;
+        }
+
+        // Since we have a valid directory, now try to load secrets if secrets file exists
+        // We dont want to load anything if there is no file, which could happen when
+        // we were not able to download any secrets due to network issues.
+        try {
+            if (Files.exists(secretDirectory.resolve(FileSecretDao.SECRET_FILE))) {
+                secretManager.loadSecretsFromLocalStore();
+            }
+        } catch (SecretManagerException e) {
+            serviceErrored("Could not read secrets from disk");
             return;
         }
         reportState(State.RUNNING);

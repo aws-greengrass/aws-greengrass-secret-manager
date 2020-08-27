@@ -12,6 +12,7 @@ import com.aws.iot.greengrass.secretmanager.crypto.RSAMasterKey;
 import com.aws.iot.greengrass.secretmanager.exception.SecretCryptoException;
 import com.aws.iot.greengrass.secretmanager.exception.SecretManagerException;
 import com.aws.iot.greengrass.secretmanager.kernel.KernelClient;
+import com.aws.iot.greengrass.secretmanager.model.AWSSecretResponse;
 import com.aws.iot.greengrass.secretmanager.model.SecretConfiguration;
 import com.aws.iot.greengrass.secretmanager.model.SecretDocument;
 import org.junit.jupiter.api.BeforeEach;
@@ -32,6 +33,7 @@ import java.security.PublicKey;
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.Base64;
 import java.util.List;
 import java.util.UUID;
 
@@ -40,6 +42,7 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.reset;
 import static org.mockito.Mockito.times;
@@ -249,6 +252,42 @@ class SecretManagerTest {
         verify(mockDao, times(1)).saveAll(documentArgumentCaptor.capture());
         // Now assert that one secret was persisted in the db
         assertEquals(1, documentArgumentCaptor.getValue().getSecrets().size());
+    }
+
+    @Test
+    void GIVEN_secret_manager_WHEN_save_to_disk_fails_THEN_throws() throws Exception {
+        when(mockAWSSecretClient.getSecret(any())).thenReturn(getMockSecretA());
+        doThrow(SecretManagerException.class).when(mockDao).saveAll(any());
+
+        SecretManager sm = new SecretManager(mockAWSSecretClient, mockKernelClient, mockDao);
+        assertThrows(SecretManagerException.class, () -> sm.syncFromCloud(getMockSecrets()));
+    }
+
+    @Test
+    void GIVEN_secret_manager_WHEN_load_from_disk_fails_THEN_throws() throws Exception {
+        when(mockAWSSecretClient.getSecret(any())).thenReturn(getMockSecretA());
+        doThrow(SecretManagerException.class).when(mockDao).getAll();
+
+        SecretManager sm = new SecretManager(mockAWSSecretClient, mockKernelClient, mockDao);
+        assertThrows(SecretManagerException.class, () -> sm.syncFromCloud(getMockSecrets()));
+        assertThrows(SecretManagerException.class, () -> sm.loadSecretsFromLocalStore());
+    }
+
+    @Test
+    void GIVEN_secret_manager_WHEN_unable_to_decrypt_THEN_load_from_disk_throws(ExtensionContext context) throws Exception {
+        ignoreExceptionOfType(context, SecretCryptoException.class);
+        AWSSecretResponse mockSecret = mock(AWSSecretResponse.class);
+        when(mockSecret.getArn()).thenReturn(ARN_1);
+        when(mockSecret.getName()).thenReturn(SECRET_NAME_1);
+        when(mockSecret.getEncryptedSecretString()).thenReturn(Base64.getEncoder().encodeToString("test".getBytes()));
+        List<AWSSecretResponse> listSecrets = new ArrayList<>();
+        listSecrets.add(mockSecret);
+        SecretDocument diskSecrets = SecretDocument.builder().secrets(listSecrets).build();
+        when(mockDao.getAll()).thenReturn(diskSecrets);
+
+        SecretManager sm = new SecretManager(mockAWSSecretClient, mockKernelClient, mockDao);
+        // This will throw as encrypted string is invalid format for crypter
+        assertThrows(SecretManagerException.class, () -> sm.loadSecretsFromLocalStore());
     }
 
     @Test

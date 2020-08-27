@@ -1,19 +1,16 @@
 package com.aws.iot.greengrass.secretmanager;
 
+import com.aws.iot.evergreen.util.Utils;
 import com.aws.iot.greengrass.secretmanager.exception.SecretManagerException;
 import com.aws.iot.greengrass.secretmanager.kernel.KernelClient;
 import com.aws.iot.greengrass.secretmanager.model.SecretDocument;
-import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.DeserializationFeature;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.datatype.jsr310.JavaTimeModule;
 
 import java.io.IOException;
-import java.io.InputStream;
-import java.io.OutputStream;
 import java.nio.file.Files;
 import java.nio.file.Path;
-import java.util.Objects;
 import javax.inject.Inject;
 
 /**
@@ -47,9 +44,9 @@ public class FileSecretDao implements SecretDao<SecretDocument> {
         Path secretDirectory = rootDir.resolve(SECRETS_DIR);
         if (!Files.exists(secretDirectory) || !Files.isDirectory(secretDirectory)) {
             try {
-                Files.createDirectories(secretDirectory);
+                Utils.createPaths(secretDirectory);
             } catch (IOException e) {
-                throw new SecretManagerException("Failed to create secret dir");
+                throw new SecretManagerException("Failed to create secret dir", e);
             }
         }
         return secretDirectory;
@@ -61,9 +58,8 @@ public class FileSecretDao implements SecretDao<SecretDocument> {
      * @throws SecretManagerException when there is any issue reading the store.
      */
     public synchronized SecretDocument getAll() throws SecretManagerException {
-        Objects.requireNonNull(filePath);
-        try (InputStream input = Files.newInputStream(filePath)) {
-            return JSON_OBJECT_MAPPER.readValue(input, new TypeReference<SecretDocument>(){});
+        try {
+            return JSON_OBJECT_MAPPER.readValue(filePath.toFile(), SecretDocument.class);
         } catch (IOException e) {
             throw new SecretManagerException(e);
         }
@@ -76,11 +72,9 @@ public class FileSecretDao implements SecretDao<SecretDocument> {
      */
     public synchronized void saveAll(SecretDocument doc) throws SecretManagerException {
         try {
-            Objects.requireNonNull(filePath);
             Files.deleteIfExists(filePath);
             Files.createFile(filePath);
-            OutputStream out = Files.newOutputStream(filePath);
-            JSON_OBJECT_MAPPER.writeValue(out, doc);
+            JSON_OBJECT_MAPPER.writeValue(filePath.toFile(), doc);
         } catch (IOException e) {
             throw new SecretManagerException(e);
         }

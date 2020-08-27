@@ -32,10 +32,9 @@ import javax.inject.Inject;
 
 /**
  * Class which holds the business logic for secret management. This class always holds a copy of
- * actual AWS secrets response in memory to server requests. Since v1 and v2 IPC models are different
+ * actual AWS secrets response in memory to serve requests. Since v1 and v2 IPC models are different
  * this class directly translates the AWS responses in memory to v1/v2 models as part of IPC requests.
- * Secrets are also persisted for availability across restarts. Secrets are encrypted using Iot thing
- * key.
+ * Secrets are stored encrypted for availability across restarts. In memory copy is always plain text.
  */
 public class SecretManager {
     private static final String LATEST_LABEL = "AWSCURRENT";
@@ -79,8 +78,9 @@ public class SecretManager {
      * Syncs secret manager by downloading secrets from cloud and then stores it locally.
      * This is used when configuration changes and secrets have to be re downloaded.
      * @param configuredSecrets List of secrets that are to be downloaded
+     * @throws SecretManagerException when there are issues reading/writing to disk
      */
-    public void syncFromCloud(List<SecretConfiguration> configuredSecrets) {
+    public void syncFromCloud(List<SecretConfiguration> configuredSecrets) throws SecretManagerException {
         List<AWSSecretResponse> downloadedSecrets = new ArrayList<>();
         for (SecretConfiguration secretConfig : configuredSecrets) {
             String secretArn = secretConfig.getArn();
@@ -118,28 +118,21 @@ public class SecretManager {
                 }
             }
         }
-        try {
-            secretDao.saveAll(SecretDocument.builder().secrets(downloadedSecrets).build());
-            // Once the secrets are finished downloading, load it locally
-            loadSecretsFromLocalStore();
-        } catch (SecretManagerException e) {
-            logger.atError().cause(e).log("Error saving secrets to disk");
-        }
+        secretDao.saveAll(SecretDocument.builder().secrets(downloadedSecrets).build());
+        // Once the secrets are finished downloading, load it locally
+        loadSecretsFromLocalStore();
     }
 
     /**
      * load the secrets from a local store. This is used across restarts to load secrets from store.
+     * @throws SecretManagerException when there are issues reading from disk
      */
-    public void loadSecretsFromLocalStore() {
+    public void loadSecretsFromLocalStore() throws SecretManagerException {
         // read the db
-        try {
-            List<AWSSecretResponse> secrets = secretDao.getAll().getSecrets();
-            for (AWSSecretResponse secretResult : secrets) {
-                nametoArnMap.put(secretResult.getName(), secretResult.getArn());
-                loadCache(secretResult);
-            }
-        } catch (SecretManagerException e) {
-            logger.atError().cause(e).log("Could not load secrets from disk");
+        List<AWSSecretResponse> secrets = secretDao.getAll().getSecrets();
+        for (AWSSecretResponse secretResult : secrets) {
+            nametoArnMap.put(secretResult.getName(), secretResult.getArn());
+            loadCache(secretResult);
         }
     }
 
@@ -151,7 +144,7 @@ public class SecretManager {
     * arn1:l1 -> secret
     * arn1:l2 -> secret
     */
-    private void loadCache(AWSSecretResponse awsSecretResponse) {
+    private void loadCache(AWSSecretResponse awsSecretResponse) throws SecretManagerException {
         GetSecretValueResponse decryptedResponse = null;
         try {
             byte[] decryptedSecret = crypter.decrypt(
@@ -164,14 +157,10 @@ public class SecretManager {
                     .versionId(awsSecretResponse.getVersionId()).versionStages(awsSecretResponse.getVersionStages())
                     .build();
         } catch (SecretCryptoException e) {
+            // This should never happen ideally
             logger.atError().kv("secret",
-                    awsSecretResponse.getArn()).log("Unable to decrypt secret, skip loading in cache");
-            return;
-        }
-        if (decryptedResponse == null) {
-            logger.atError().kv("secret",
-                    awsSecretResponse.getArn()).log("Unable to decrypt secret, skip loading in cache");
-            return;
+                    awsSecretResponse.getArn()).cause(e).log("Unable to decrypt secret, skip loading in cache");
+            throw new SecretManagerException("Cannot load secret from disk");
         }
         String secretArn = decryptedResponse.arn();
         cache.put(secretArn, decryptedResponse);

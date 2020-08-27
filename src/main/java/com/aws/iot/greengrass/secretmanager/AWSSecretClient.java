@@ -71,23 +71,23 @@ public class AWSSecretClient {
             throw new IllegalArgumentException(String.format(errorStr, "name"));
         }
         if (response.createdDate() == null) {
-            throw new IllegalArgumentException(String.format(errorStr, "Created date"));
+            throw new IllegalArgumentException(String.format(errorStr, "created date"));
         }
         if (!response.hasVersionStages() || response.versionStages().isEmpty()) {
             throw new IllegalArgumentException(String.format(errorStr, "version stages"));
         }
         if (Utils.isEmpty(response.secretString()) && response.secretBinary() == null) {
-            throw new IllegalArgumentException(String.format(errorStr, "Both secret string and binary"));
+            throw new IllegalArgumentException(String.format(errorStr, "both secret string and binary"));
         }
     }
 
     private void validateInput(GetSecretValueRequest request) throws IllegalArgumentException {
         if (Utils.isEmpty(request.secretId())) {
-            throw new IllegalArgumentException("Invalid secret request, secret id is required");
+            throw new IllegalArgumentException("invalid secret request, secret id is required");
         }
 
         if (Utils.isEmpty(request.versionId()) && Utils.isEmpty(request.versionStage())) {
-            throw new IllegalArgumentException("Invalid secret request, either version Id or stage is required");
+            throw new IllegalArgumentException("invalid secret request, either version Id or stage is required");
         }
     }
 }

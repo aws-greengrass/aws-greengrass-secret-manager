@@ -3,23 +3,17 @@ package com.aws.iot.greengrass.secretmanager.model;
 import com.fasterxml.jackson.annotation.JsonInclude;
 import lombok.AllArgsConstructor;
 import lombok.Builder;
-import lombok.EqualsAndHashCode;
-import lombok.Getter;
+import lombok.Data;
 import lombok.NoArgsConstructor;
 import lombok.NonNull;
-import lombok.Setter;
-import lombok.ToString;
 
 import java.util.List;
 
 @JsonInclude(JsonInclude.Include.NON_NULL)
-@Getter
-@Setter
 @Builder
 @AllArgsConstructor
 @NoArgsConstructor
-@ToString
-@EqualsAndHashCode
+@Data
 public class SecretConfiguration {
     @NonNull
     String arn;
