@@ -1,5 +1,6 @@
 package com.aws.iot.greengrass.secretmanager.kernel;
 
+import com.aws.iot.evergreen.config.Configuration;
 import com.aws.iot.evergreen.config.Topic;
 import com.aws.iot.evergreen.deployment.DeviceConfiguration;
 import com.aws.iot.evergreen.kernel.Kernel;
@@ -22,8 +23,8 @@ public class kernelClientTest {
     private static final String mockKeyPath = "/test/keypath";
     private static final String mockCertPath = "/test/certpath";
 
-    @TempDir
-    Path rootDir;
+    @Mock
+    Configuration mockConfiguration;
 
     @Mock
     Kernel mockKernel;
@@ -48,9 +49,9 @@ public class kernelClientTest {
     }
 
     @Test
-    void GIVEN_kernel_client_WHEN_get_root_THEN_works() {
+    void GIVEN_kernel_client_WHEN_get_contextt_THEN_works() {
         KernelClient kernelClient = new KernelClient(mockKernel, mockDeviceConfiguration);
-        when(mockKernel.getRootPath()).thenReturn(rootDir);
-        assertEquals(rootDir, kernelClient.getRoot());
+        when(mockKernel.getConfig()).thenReturn(mockConfiguration);
+        assertEquals(mockConfiguration, kernelClient.getConfig());
     }
 }

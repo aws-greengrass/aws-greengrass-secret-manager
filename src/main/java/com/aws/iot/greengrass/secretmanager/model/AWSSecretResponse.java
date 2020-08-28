@@ -27,5 +27,5 @@ public class AWSSecretResponse {
     @NonNull
     List<String> versionStages;
     @NonNull
-    Instant createdDate;
+    long createdDate;
 }

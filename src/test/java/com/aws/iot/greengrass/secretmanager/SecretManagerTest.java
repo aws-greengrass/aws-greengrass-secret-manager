@@ -1,5 +1,7 @@
 package com.aws.iot.greengrass.secretmanager;
 
+import com.aws.iot.evergreen.config.Configuration;
+import com.aws.iot.evergreen.config.Topic;
 import com.aws.iot.evergreen.ipc.services.secret.GetSecretValueRequest;
 import com.aws.iot.evergreen.ipc.services.secret.GetSecretValueResult;
 import com.aws.iot.evergreen.ipc.services.secret.SecretResponseStatus;
@@ -42,7 +44,9 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.Mockito.doThrow;
+import static org.mockito.Mockito.lenient;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.reset;
 import static org.mockito.Mockito.times;
@@ -69,7 +73,7 @@ class SecretManagerTest {
 
     private String ENCRYPTED_SECRET_1;
     private String ENCRYPTED_SECRET_2;
-
+    private Crypter crypter;
 
     @TempDir
     Path secretDir;
@@ -101,18 +105,23 @@ class SecretManagerTest {
 
     @BeforeEach
     void setup() throws Exception {
-        when(mockKernelClient.getPrivateKeyPath()).thenReturn(getClass().getResource("privateKey.pem").getPath());
-        when(mockKernelClient.getCertPath()).thenReturn(getClass().getResource("cert.pem").getPath());
-
+        lenient().when(mockKernelClient.getPrivateKeyPath()).thenReturn(getClass().getResource("privateKey.pem").getPath());
+        lenient().when(mockKernelClient.getCertPath()).thenReturn(getClass().getResource("cert.pem").getPath());
+        Configuration mockConfiguration = mock(Configuration.class);
+        lenient().when(mockKernelClient.getConfig()).thenReturn(mockConfiguration);
+        Topic mockTopic = mock(Topic.class);
+        lenient().when(mockConfiguration.lookup(anyString(), anyString(), anyString())).thenReturn(mockTopic);
         PublicKey publicKey = PemFile.generatePublicKeyFromCert(getClass().getResource("cert.pem").getPath());
         PrivateKey privateKey = PemFile.generatePrivateKey(getClass().getResource("privateKey.pem").getPath());
 
         MasterKey masterKey = RSAMasterKey.createInstance(publicKey, privateKey);
         KeyChain keyChain = new KeyChain();
         keyChain.addMasterKey(masterKey);
-        Crypter crypter = new Crypter(keyChain);
-        ENCRYPTED_SECRET_1 = new String(crypter.encrypt(SECRET_VALUE_1.getBytes(StandardCharsets.UTF_8), ARN_1));
-        ENCRYPTED_SECRET_2 = new String(crypter.encrypt(SECRET_VALUE_2.getBytes(StandardCharsets.UTF_8), ARN_2));
+        this.crypter = new Crypter(keyChain);
+        ENCRYPTED_SECRET_1 = Base64.getEncoder()
+                .encodeToString(crypter.encrypt(SECRET_VALUE_1.getBytes(StandardCharsets.UTF_8), ARN_1));
+        ENCRYPTED_SECRET_2 = Base64.getEncoder()
+                .encodeToString(crypter.encrypt(SECRET_VALUE_2.getBytes(StandardCharsets.UTF_8), ARN_2));
     }
 
     private GetSecretValueResponse getMockSecret(String name,
@@ -135,12 +144,28 @@ class SecretManagerTest {
         return getMockSecret(SECRET_NAME_2, ARN_2, SECRET_DATE_2, SECRET_VALUE_2, SECRET_VERSION_2,
                 Arrays.asList(new String[]{LATEST_LABEL, SECRET_LABEL_2}));
     }
+    private AWSSecretResponse getMockDaoSecretA() {
+        return AWSSecretResponse.builder().name(SECRET_NAME_1).arn(ARN_1).createdDate(SECRET_DATE_1.toEpochMilli())
+                .encryptedSecretString(ENCRYPTED_SECRET_1)
+                .versionStages(Arrays.asList(new String[]{LATEST_LABEL, SECRET_LABEL_1}))
+                .versionId(SECRET_VERSION_1).build();
+    }
+
+    private AWSSecretResponse getMockDaoSecretB() {
+        return AWSSecretResponse.builder().name(SECRET_NAME_2).arn(ARN_2).createdDate(SECRET_DATE_2.toEpochMilli())
+                .encryptedSecretString(ENCRYPTED_SECRET_2)
+                .versionStages(Arrays.asList(new String[]{LATEST_LABEL, SECRET_LABEL_2}))
+                .versionId(SECRET_VERSION_2).build();
+    }
 
     @Test
     void GIVEN_secret_manager_WHEN_sync_from_cloud_THEN_secrets_are_loaded() throws Exception {
-        when(mockKernelClient.getRoot()).thenReturn(secretDir);
         when(mockAWSSecretClient.getSecret(any())).thenReturn(getMockSecretA()).thenReturn(getMockSecretB());
-        SecretManager sm = new SecretManager(mockAWSSecretClient, mockKernelClient, new FileSecretDao(mockKernelClient));
+        List<AWSSecretResponse> storedSecrets = new ArrayList<>();
+        storedSecrets.add(getMockDaoSecretA());
+        storedSecrets.add(getMockDaoSecretB());
+        when(mockDao.getAll()).thenReturn(SecretDocument.builder().secrets(storedSecrets).build());
+        SecretManager sm = new SecretManager(mockAWSSecretClient, crypter, mockDao);
         sm.syncFromCloud(getMockSecrets());
 
         GetSecretValueRequest request = GetSecretValueRequest.builder().secretId(SECRET_NAME_1).build();
@@ -255,15 +280,6 @@ class SecretManagerTest {
     }
 
     @Test
-    void GIVEN_secret_manager_WHEN_save_to_disk_fails_THEN_throws() throws Exception {
-        when(mockAWSSecretClient.getSecret(any())).thenReturn(getMockSecretA());
-        doThrow(SecretManagerException.class).when(mockDao).saveAll(any());
-
-        SecretManager sm = new SecretManager(mockAWSSecretClient, mockKernelClient, mockDao);
-        assertThrows(SecretManagerException.class, () -> sm.syncFromCloud(getMockSecrets()));
-    }
-
-    @Test
     void GIVEN_secret_manager_WHEN_load_from_disk_fails_THEN_throws() throws Exception {
         when(mockAWSSecretClient.getSecret(any())).thenReturn(getMockSecretA());
         doThrow(SecretManagerException.class).when(mockDao).getAll();
@@ -320,8 +336,7 @@ class SecretManagerTest {
 
     @Test
     void GIVEN_secret_manager_WHEN_get_called_with_invalid_request_THEN_proper_errors_are_returned() throws Exception {
-        when(mockKernelClient.getRoot()).thenReturn(secretDir);
-        SecretManager sm = new SecretManager(mockAWSSecretClient, mockKernelClient, new FileSecretDao(mockKernelClient));
+        SecretManager sm = new SecretManager(mockAWSSecretClient, crypter, mockDao);
         GetSecretValueRequest request = GetSecretValueRequest.builder().build();
         GetSecretValueResult response = sm.getSecret(request);
         assertEquals(SecretResponseStatus.InvalidRequest, response.getStatus());
@@ -341,6 +356,10 @@ class SecretManagerTest {
 
         // Actually load the secrets
         when(mockAWSSecretClient.getSecret(any())).thenReturn(getMockSecretA()).thenReturn(getMockSecretB());
+        List<AWSSecretResponse> storedSecrets = new ArrayList<>();
+        storedSecrets.add(getMockDaoSecretA());
+        storedSecrets.add(getMockDaoSecretB());
+        when(mockDao.getAll()).thenReturn(SecretDocument.builder().secrets(storedSecrets).build());
         sm.syncFromCloud(getMockSecrets());
 
         // Create a request for secret with both version and label

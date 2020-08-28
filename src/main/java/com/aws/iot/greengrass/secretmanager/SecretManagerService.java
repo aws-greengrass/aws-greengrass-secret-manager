@@ -41,7 +41,7 @@ import static com.aws.iot.evergreen.packagemanager.KernelConfigResolver.PARAMETE
 public class SecretManagerService extends EvergreenService {
 
     public static final String SECRET_MANAGER_SERVICE_NAME = "aws.greengrass.secret.manager";
-    public static final String SECRETS_TOPIC = "aws";
+    public static final String SECRETS_TOPIC = "awsCloud";
     private static final ObjectMapper CBOR_MAPPER = new CBORMapper();
     private static final ObjectMapper OBJECT_MAPPER =
             new ObjectMapper().configure(MapperFeature.ACCEPT_CASE_INSENSITIVE_PROPERTIES, true);
@@ -76,18 +76,18 @@ public class SecretManagerService extends EvergreenService {
         // TODO: reload secrets on deployment even if secrets dont change
         String val = Coerce.toString(node);
         if (val == null) {
-            logger.atWarn().kv("service", SECRET_MANAGER_SERVICE_NAME).log("No secrets configured");
+            logger.atInfo().kv("service", SECRET_MANAGER_SERVICE_NAME).log("No secrets configured");
             return;
         }
         try {
             configuredSecrets = OBJECT_MAPPER.readValue(val, new TypeReference<List<SecretConfiguration>>(){});
             secretManager.syncFromCloud(configuredSecrets);
         } catch (IOException e) {
-            logger.atWarn().kv("node", SECRETS_TOPIC).kv("value", val)
-                    .log("Unable to parse secrets configured", e);
+            logger.atWarn().kv("node", SECRETS_TOPIC).kv("value", val).setCause(e)
+                    .log("Unable to parse secrets configured");
         } catch (SecretManagerException e) {
             logger.atWarn().kv("service", SECRET_MANAGER_SERVICE_NAME).setCause(e)
-                    .log("Unable to download secrets from cloud", e);
+                    .log("Unable to download secrets from cloud");
         }
     }
 
@@ -108,23 +108,14 @@ public class SecretManagerService extends EvergreenService {
     protected void startup() {
         // TODO: Modify secret service to only provide interface to deal with downloaded
         // secrets during download phase.
-        Path root = kernelClient.getRoot();
-        // By this time, secrets directory should be up, if not then db was not setup.
-        Path secretDirectory = root.resolve(FileSecretDao.SECRETS_DIR);
-        if (!Files.exists(secretDirectory)) {
-            serviceErrored("Secrets directory is missing");
-            return;
-        }
 
         // Since we have a valid directory, now try to load secrets if secrets file exists
         // We dont want to load anything if there is no file, which could happen when
         // we were not able to download any secrets due to network issues.
         try {
-            if (Files.exists(secretDirectory.resolve(FileSecretDao.SECRET_FILE))) {
-                secretManager.loadSecretsFromLocalStore();
-            }
+            secretManager.loadSecretsFromLocalStore();
         } catch (SecretManagerException e) {
-            serviceErrored("Could not read secrets from disk");
+            serviceErrored(e);
             return;
         }
         reportState(State.RUNNING);

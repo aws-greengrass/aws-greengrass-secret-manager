@@ -21,6 +21,7 @@ import software.amazon.awssdk.services.secretsmanager.model.GetSecretValueRespon
 import java.nio.charset.StandardCharsets;
 import java.security.PrivateKey;
 import java.security.PublicKey;
+import java.time.Instant;
 import java.util.ArrayList;
 import java.util.Base64;
 import java.util.HashSet;
@@ -75,6 +76,17 @@ public class SecretManager {
     }
 
     /**
+     * Constructor for unit testing.
+     * @param secretClient client for aws secrets.
+     * @param crypter      crypter for secrets.
+     * @param dao          dao for persistent store.
+     */
+    SecretManager(AWSSecretClient secretClient, Crypter crypter, FileSecretDao dao) {
+        this.secretDao = dao;
+        this.secretClient = secretClient;
+        this.crypter = crypter;
+    }
+    /**
      * Syncs secret manager by downloading secrets from cloud and then stores it locally.
      * This is used when configuration changes and secrets have to be re downloaded.
      * @param configuredSecrets List of secrets that are to be downloaded
@@ -107,7 +119,7 @@ public class SecretManager {
                             .encryptedSecretString(Base64.getEncoder().encodeToString(encryptedSecret))
                             .name(result.name())
                             .arn(result.arn())
-                            .createdDate(result.createdDate())
+                            .createdDate(result.createdDate().toEpochMilli())
                             .versionId(result.versionId())
                             .versionStages(result.versionStages())
                             .build();
@@ -152,9 +164,12 @@ public class SecretManager {
                     awsSecretResponse.getArn());
             // reuse all fields except the secret value, replace that with decrypted value
             decryptedResponse = GetSecretValueResponse.builder()
-                    .secretString(new String(decryptedSecret, StandardCharsets.UTF_8)).name(awsSecretResponse.getName())
-                    .arn(awsSecretResponse.getArn()).createdDate(awsSecretResponse.getCreatedDate())
-                    .versionId(awsSecretResponse.getVersionId()).versionStages(awsSecretResponse.getVersionStages())
+                    .secretString(new String(decryptedSecret, StandardCharsets.UTF_8))
+                    .name(awsSecretResponse.getName())
+                    .arn(awsSecretResponse.getArn())
+                    .createdDate(Instant.ofEpochMilli(awsSecretResponse.getCreatedDate()))
+                    .versionId(awsSecretResponse.getVersionId())
+                    .versionStages(awsSecretResponse.getVersionStages())
                     .build();
         } catch (SecretCryptoException e) {
             // This should never happen ideally

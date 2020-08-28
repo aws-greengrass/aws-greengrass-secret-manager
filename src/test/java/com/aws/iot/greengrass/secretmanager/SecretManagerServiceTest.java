@@ -13,7 +13,6 @@ import com.aws.iot.evergreen.kernel.Kernel;
 import com.aws.iot.evergreen.testcommons.testutilities.EGExtension;
 import com.aws.iot.greengrass.secretmanager.exception.SecretManagerException;
 import org.junit.jupiter.api.AfterEach;
-import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.junit.jupiter.api.extension.ExtensionContext;
@@ -22,7 +21,6 @@ import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 
 import java.io.IOException;
-import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.Arrays;
 import java.util.concurrent.CountDownLatch;
@@ -54,13 +52,6 @@ public class SecretManagerServiceTest {
 
     @Mock
     SecretManager mockSecretManager;
-
-    @BeforeEach
-    void setup() throws IOException {
-        // create secrets directory by default
-        Files.createDirectories(rootDir.resolve(FileSecretDao.SECRETS_DIR));
-        Files.createFile(rootDir.resolve(FileSecretDao.SECRETS_DIR).resolve(FileSecretDao.SECRET_FILE));
-    }
 
     void startKernelWithConfig(String configFile, State expectedState) throws InterruptedException {
         CountDownLatch secretManagerRunning = new CountDownLatch(1);
@@ -106,7 +97,9 @@ public class SecretManagerServiceTest {
     }
 
     @Test
-    void GIVEN_secret_service_WHEN_load_secret_fails_THEN_service_errors() throws Exception {
+    void GIVEN_secret_service_WHEN_load_secret_fails_THEN_service_errors(ExtensionContext context) throws Exception {
+        ignoreExceptionOfType(context, com.aws.iot.greengrass.secretmanager.exception.SecretManagerException.class);
+
         doThrow(SecretManagerException.class).when(mockSecretManager).loadSecretsFromLocalStore();
         startKernelWithConfig("config.yaml", State.ERRORED);
     }

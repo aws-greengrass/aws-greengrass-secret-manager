@@ -1,5 +1,7 @@
 package com.aws.iot.greengrass.secretmanager.kernel;
 
+import com.aws.iot.evergreen.config.Configuration;
+import com.aws.iot.evergreen.dependency.Context;
 import com.aws.iot.evergreen.deployment.DeviceConfiguration;
 import com.aws.iot.evergreen.kernel.Kernel;
 import com.aws.iot.evergreen.util.Coerce;
@@ -31,7 +33,7 @@ public class KernelClient {
         return true;
     }
 
-    public Path getRoot() {
-        return kernel.getRootPath();
+    public Configuration getConfig() {
+        return kernel.getConfig();
     }
 }
