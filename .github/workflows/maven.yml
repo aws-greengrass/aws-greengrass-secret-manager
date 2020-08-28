@@ -78,7 +78,7 @@ jobs:
         with:
           java-version: 1.8
       - name: Build with maven
-      - run: mvn package -DskipTests
+        run: mvn package -DskipTests
       - run: sudo apt-get install -y awscli
       - name: Upload to S3
         run: aws s3 cp target/SecretManager.jar s3://gg-evergreen-releases/${{github.repository}}/${{github.ref}}/evergreen-secret-manager-${{github.sha}}.jar
