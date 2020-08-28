@@ -5,11 +5,11 @@ description: AWS Greengrass Secret Manager
 publisher: AWS
 version: '0.0.0'
 manifests:
-   - platform:
+  - platform:
       os: linux
-  parameters:
-    - name: cloudSecrets
-      value: '[]'
-      type: String
-  artifacts:
-    uri: s3://gg-dev-artifacts/$componentName/$platform.os/$version/aws.greengrass.secret.manager.jar
+    parameters:
+      - name: cloudSecrets
+        value: '[]'
+        type: STRING
+    artifacts:
+      uri: s3://gg-dev-artifacts/$componentName/$platform.os/$version/aws.greengrass.secret.manager.jar
