@@ -1,20 +1,15 @@
 ---
-RecipeTemplateVersion: '2020-01-25'
-ComponentName: aws.greengrass.secret.manager
-Description: AWS Greengrass Secret Manager
-Publisher: AWS
-Version: '0.0.0'
-ComponentType: plugin
-Parameters:
-Lifecycle: {}
-Platforms:
-  - linux
-  - ubuntu
-  - debian
-  - fedora
-  - raspbian
-  - macos
-  - windows
-Artifacts:
-  all:
-    - Uri: s3://gg-dev-artifacts/$componentName/$platform/$version/aws.greengrass.secret.manager.jar
+templateVersion: '2020-01-25'
+componentName: aws.greengrass.secret.manager
+description: AWS Greengrass Secret Manager
+publisher: AWS
+version: '0.0.0'
+manifests:
+   - platform:
+      os: linux
+  parameters:
+    - name: cloudSecrets
+      value: '[]'
+      type: String
+  artifacts:
+    uri: s3://gg-dev-artifacts/$componentName/$platform.os/$version/aws.greengrass.secret.manager.jar
