@@ -41,7 +41,7 @@ import static com.aws.iot.evergreen.packagemanager.KernelConfigResolver.PARAMETE
 public class SecretManagerService extends EvergreenService {
 
     public static final String SECRET_MANAGER_SERVICE_NAME = "aws.greengrass.secret.manager";
-    public static final String SECRETS_TOPIC = "awsCloud";
+    public static final String SECRETS_TOPIC = "cloudSecrets";
     private static final ObjectMapper CBOR_MAPPER = new CBORMapper();
     private static final ObjectMapper OBJECT_MAPPER =
             new ObjectMapper().configure(MapperFeature.ACCEPT_CASE_INSENSITIVE_PROPERTIES, true);

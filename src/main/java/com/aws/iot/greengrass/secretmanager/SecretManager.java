@@ -86,6 +86,7 @@ public class SecretManager {
         this.secretClient = secretClient;
         this.crypter = crypter;
     }
+
     /**
      * Syncs secret manager by downloading secrets from cloud and then stores it locally.
      * This is used when configuration changes and secrets have to be re downloaded.

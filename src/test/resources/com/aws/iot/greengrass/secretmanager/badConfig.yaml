@@ -9,4 +9,4 @@ services:
 
   aws.greengrass.secret.manager:
     parameters:
-      awsCloud: "bad config"
+      cloudSecrets: "bad config"
