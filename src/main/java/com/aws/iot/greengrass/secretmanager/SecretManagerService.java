@@ -1,6 +1,8 @@
 package com.aws.iot.greengrass.secretmanager;
 
+import com.aws.iot.evergreen.config.Topic;
 import com.aws.iot.evergreen.config.Topics;
+import com.aws.iot.evergreen.config.WhatHappened;
 import com.aws.iot.evergreen.dependency.ImplementsService;
 import com.aws.iot.evergreen.dependency.State;
 import com.aws.iot.evergreen.ipc.ConnectionContext;
@@ -15,16 +17,21 @@ import com.aws.iot.evergreen.ipc.services.secret.SecretGenericResponse;
 import com.aws.iot.evergreen.ipc.services.secret.SecretResponseStatus;
 import com.aws.iot.evergreen.kernel.EvergreenService;
 import com.aws.iot.evergreen.util.Coerce;
+import com.aws.iot.greengrass.secretmanager.exception.SecretManagerException;
+import com.aws.iot.greengrass.secretmanager.kernel.KernelClient;
 import com.aws.iot.greengrass.secretmanager.model.SecretConfiguration;
+import com.fasterxml.jackson.core.type.TypeReference;
+import com.fasterxml.jackson.databind.MapperFeature;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.dataformat.cbor.databind.CBORMapper;
 
 import java.io.IOException;
+import java.nio.file.Files;
+import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.Future;
-import java.util.stream.Collectors;
 import javax.inject.Inject;
 
 import static com.aws.iot.evergreen.deployment.bootstrap.BootstrapSuccessCode.REQUEST_RESTART;
@@ -34,40 +41,54 @@ import static com.aws.iot.evergreen.packagemanager.KernelConfigResolver.PARAMETE
 public class SecretManagerService extends EvergreenService {
 
     public static final String SECRET_MANAGER_SERVICE_NAME = "aws.greengrass.secret.manager";
-    public static final String SECRETS_TOPIC = "secrets";
+    public static final String SECRETS_TOPIC = "cloudSecrets";
     private static final ObjectMapper CBOR_MAPPER = new CBORMapper();
+    private static final ObjectMapper OBJECT_MAPPER =
+            new ObjectMapper().configure(MapperFeature.ACCEPT_CASE_INSENSITIVE_PROPERTIES, true);
 
-    private List<String> configuredSecrets = new ArrayList<String>();
+    private List<SecretConfiguration> configuredSecrets = new ArrayList<>();
     private final SecretManager secretManager;
-
-    private IPCRouter router;
+    private final IPCRouter router;
+    private final KernelClient kernelClient;
 
     /**
      * Constructor for SecretManagerService Service.
      * @param topics        root Configuration topic for this service
      * @param router        router for registering the IPC callback
+     * @param kernelClient  Kernel client for accessing kernel state and methods
      * @param secretManager secret manager which manages secrets
      */
     @Inject
     public SecretManagerService(Topics topics,
                                 IPCRouter router,
-                                SecretManager secretManager) {
+                                SecretManager secretManager,
+                                KernelClient kernelClient) {
         super(topics);
         this.router = router;
-        // TODO: Subscribe on secret changes
-        topics.lookup(PARAMETERS_CONFIG_KEY, SECRETS_TOPIC)
-                .subscribe((why, newv) ->
-                        configuredSecrets = Coerce.toStringList(newv));
         this.secretManager = secretManager;
-        // TODO: Setup persistent directories/permissions for local db
+        this.kernelClient = kernelClient;
+        // TODO: Subscribe on thing key updates
+        topics.lookup(PARAMETERS_CONFIG_KEY, SECRETS_TOPIC)
+                .subscribe(this::serviceChanged);
     }
 
-    @Override
-    public void install() {
-        // TODO: Add support for label in confugration
-        // TODO: move download to kernel downloader
-        secretManager.syncFromCloud(configuredSecrets.stream()
-                .map(r -> SecretConfiguration.builder().arn(r).build()).collect(Collectors.toList()));
+    private void serviceChanged(WhatHappened whatHappened, Topic node) {
+        // TODO: reload secrets on deployment even if secrets dont change
+        String val = Coerce.toString(node);
+        if (val == null) {
+            logger.atInfo().kv("service", SECRET_MANAGER_SERVICE_NAME).log("No secrets configured");
+            return;
+        }
+        try {
+            configuredSecrets = OBJECT_MAPPER.readValue(val, new TypeReference<List<SecretConfiguration>>(){});
+            secretManager.syncFromCloud(configuredSecrets);
+        } catch (IOException e) {
+            logger.atWarn().kv("node", SECRETS_TOPIC).kv("value", val).setCause(e)
+                    .log("Unable to parse secrets configured");
+        } catch (SecretManagerException e) {
+            logger.atWarn().kv("service", SECRET_MANAGER_SERVICE_NAME).setCause(e)
+                    .log("Unable to download secrets from cloud");
+        }
     }
 
     @Override
@@ -87,6 +108,16 @@ public class SecretManagerService extends EvergreenService {
     protected void startup() {
         // TODO: Modify secret service to only provide interface to deal with downloaded
         // secrets during download phase.
+
+        // Since we have a valid directory, now try to load secrets if secrets file exists
+        // We dont want to load anything if there is no file, which could happen when
+        // we were not able to download any secrets due to network issues.
+        try {
+            secretManager.loadSecretsFromLocalStore();
+        } catch (SecretManagerException e) {
+            serviceErrored(e);
+            return;
+        }
         reportState(State.RUNNING);
     }
 
@@ -97,9 +128,9 @@ public class SecretManagerService extends EvergreenService {
 
     /**
      * Handles secret API calls from IPC.
-     * @param message  API message recevied from a client.
+     * @param message  API message received from a client.
      * @param context  connection context received from a client.
-     * @return
+     * @return API response as IPC frame
      */
     public Future<FrameReader.Message> handleMessage(FrameReader.Message message, ConnectionContext context) {
         CompletableFuture<FrameReader.Message> fut = new CompletableFuture<>();

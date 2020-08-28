@@ -1,0 +1,11 @@
+---
+services:
+  main:
+    lifecycle:
+      install:
+        all: echo All installed
+    dependencies:
+      - aws.greengrass.secret.manager
+
+  aws.greengrass.secret.manager:
+    parameters: {}
