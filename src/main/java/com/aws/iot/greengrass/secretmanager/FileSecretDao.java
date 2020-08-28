@@ -5,6 +5,8 @@ import com.aws.iot.evergreen.util.Coerce;
 import com.aws.iot.greengrass.secretmanager.exception.SecretManagerException;
 import com.aws.iot.greengrass.secretmanager.kernel.KernelClient;
 import com.aws.iot.greengrass.secretmanager.model.SecretDocument;
+import com.fasterxml.jackson.databind.MapperFeature;
+import com.fasterxml.jackson.databind.ObjectMapper;
 
 import java.io.IOException;
 import javax.inject.Inject;
@@ -21,6 +23,8 @@ import static com.aws.iot.greengrass.secretmanager.SecretManagerService.SECRET_M
 public class FileSecretDao implements SecretDao<SecretDocument> {
     public static final String SECRET_RESPONSE_TOPIC = "secretResponse";
     private final KernelClient kernelClient;
+    private static final ObjectMapper OBJECT_MAPPER =
+            new ObjectMapper().configure(MapperFeature.ACCEPT_CASE_INSENSITIVE_PROPERTIES, true);
 
     /**
      * Constructor.
@@ -43,17 +47,26 @@ public class FileSecretDao implements SecretDao<SecretDocument> {
         if (secretResponseTopic.getOnce() == null) {
             throw new SecretManagerException("No secrets found in file");
         }
-        return (SecretDocument) secretResponseTopic.getOnce();
+        try {
+            return OBJECT_MAPPER.readValue(Coerce.toString(secretResponseTopic), SecretDocument.class);
+        } catch (IOException e) {
+            throw new SecretManagerException("Cannot read secret response from store", e);
+        }
     }
 
     /**
      * Save a secret document to underlying file store.
      * @param doc {@link SecretDocument} containing list of secrets to persist
+     * @throws SecretManagerException when there is any issue writing to the store.
      */
-    public synchronized void saveAll(SecretDocument doc) {
+    public synchronized void saveAll(SecretDocument doc) throws SecretManagerException {
         Topic secretTopic = kernelClient.getConfig().lookup(SERVICES_NAMESPACE_TOPIC,
                 SECRET_MANAGER_SERVICE_NAME, SECRET_RESPONSE_TOPIC);
-        secretTopic.withValue(doc);
+        try {
+            secretTopic.withValue(OBJECT_MAPPER.writeValueAsString(doc));
+        } catch (IOException e) {
+            throw new SecretManagerException("Cannot write secret response to store", e);
+        }
     }
 }
 

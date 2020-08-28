@@ -7,17 +7,17 @@ import com.aws.iot.greengrass.secretmanager.exception.SecretManagerException;
 import com.aws.iot.greengrass.secretmanager.kernel.KernelClient;
 import com.aws.iot.greengrass.secretmanager.model.AWSSecretResponse;
 import com.aws.iot.greengrass.secretmanager.model.SecretDocument;
-import com.fasterxml.jackson.core.type.TypeReference;
+import com.fasterxml.jackson.databind.MapperFeature;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
-import org.junit.jupiter.api.io.TempDir;
+import org.mockito.ArgumentCaptor;
+import org.mockito.Captor;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 
 import java.io.IOException;
-import java.nio.file.Files;
-import java.nio.file.Path;
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.Arrays;
@@ -30,9 +30,6 @@ import static com.aws.iot.greengrass.secretmanager.SecretManagerService.SECRET_M
 import static org.hamcrest.MatcherAssert.assertThat;
 import static org.hamcrest.Matchers.hasItem;
 import static org.junit.jupiter.api.Assertions.assertEquals;
-import static org.junit.jupiter.api.Assertions.assertFalse;
-import static org.junit.jupiter.api.Assertions.assertThrows;
-import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
@@ -55,17 +52,14 @@ class FileSecretDaoTest {
     private final static String LABEL4 = "new label4";
     private final static long DATE_2 = Instant.now().minusSeconds(100L).toEpochMilli();
 
-    private Path secretDir;
-    private Path secretPath;
-
-    @TempDir
-    Path rootDir;
-
     @Mock
     KernelClient mockKernelClient;
 
     @Mock
     Configuration mockConfiguration;
+
+    @Captor
+    ArgumentCaptor<String> stringCapor;
 
     private List<AWSSecretResponse> getSecrets() {
         List<AWSSecretResponse> secrets = new ArrayList<>();
@@ -97,19 +91,6 @@ class FileSecretDaoTest {
         when(mockKernelClient.getConfig()).thenReturn(mockConfiguration);
     }
 
-    /*
-    @Test
-    void GIVEN_dao_store_WHEN_secrets_file_removed_THEN_store_get_save_fails() throws SecretManagerException, IOException {
-        FileSecretDao dao = new FileSecretDao(mockKernelClient);
-        List<AWSSecretResponse> response = getSecrets();
-        SecretDocument doc = new SecretDocument(response);
-        dao.saveAll(doc);
-        assertTrue(Files.exists(secretPath));
-
-        Files.deleteIfExists(secretPath);
-        assertThrows(SecretManagerException.class, () -> dao.getAll());
-    }
-*/
     @Test
     void GIVEN_dao_store_WHEN_secrets_saved_THEN_get_returns_them() throws SecretManagerException, IOException {
         FileSecretDao dao = new FileSecretDao(mockKernelClient);
@@ -122,9 +103,33 @@ class FileSecretDaoTest {
         SecretDocument doc = new SecretDocument(response);
         dao.saveAll(doc);
 
-        verify(mockTopic, times(1)).withValue(doc);
+        verify(mockTopic, times(1)).withValue(stringCapor.capture());
 
-        when(mockTopic.getOnce()).thenReturn((Object) doc );
+        ObjectMapper mapper =
+                new ObjectMapper().configure(MapperFeature.ACCEPT_CASE_INSENSITIVE_PROPERTIES, true);
+
+        SecretDocument writtendoc = mapper.readValue(stringCapor.getValue(), SecretDocument.class);
+        AWSSecretResponse writtenSecret1 = writtendoc.getSecrets().get(0);
+        assertEquals(SECRET_NAME_1, writtenSecret1.getName());
+        assertEquals(SECRET_STRING_1, writtenSecret1.getEncryptedSecretString());
+        assertEquals(ARN_1, writtenSecret1.getArn());
+        assertEquals(VERSION_ID_1, writtenSecret1.getVersionId());
+        assertEquals(DATE_1, writtenSecret1.getCreatedDate());
+        assertThat(writtenSecret1.getVersionStages(), hasItem(LABEL1));
+        assertThat(writtenSecret1.getVersionStages(), hasItem(LABEL2));
+
+        AWSSecretResponse writtenSecret2 = writtendoc.getSecrets().get(1);
+        assertEquals(SECRET_NAME_2, writtenSecret2.getName());
+        assertEquals(SECRET_STRING_2, writtenSecret2.getEncryptedSecretString());
+        assertEquals(ARN_2, writtenSecret2.getArn());
+        assertEquals(VERSION_ID_2, writtenSecret2.getVersionId());
+        assertEquals(DATE_2, writtenSecret2.getCreatedDate());
+        assertThat(writtenSecret2.getVersionStages(), hasItem(LABEL3));
+        assertThat(writtenSecret2.getVersionStages(), hasItem(LABEL4));
+
+
+        // Validate that read works now
+        when(mockTopic.getOnce()).thenReturn(stringCapor.getValue());
         // Now read the structure from the dao object
         AWSSecretResponse firstSecretFromDao = dao.getAll().getSecrets().get(0);
 
