@@ -15,6 +15,10 @@ import software.amazon.awssdk.services.secretsmanager.model.InvalidParameterExce
 import software.amazon.awssdk.services.secretsmanager.model.InvalidRequestException;
 import software.amazon.awssdk.services.secretsmanager.model.ResourceNotFoundException;
 
+import java.time.Instant;
+import java.util.Arrays;
+import java.util.UUID;
+
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.mockito.ArgumentMatchers.any;
@@ -25,6 +29,7 @@ class AWSSecretClientTest {
 
     private static final String SECRET_NAME = "EGUnitTest1";
     private static final String SECRET_VALUE = "plainText";
+    private static final String ARN = "arn";
     private static final String LATEST_LABEL = "AWSCURRENT";
 
     @Mock
@@ -32,7 +37,14 @@ class AWSSecretClientTest {
 
     @Test
     void GIVEN_aws_client_WHEN_get_secret_THEN_secret_returned() throws SecretManagerException {
-        GetSecretValueResponse mockResult = GetSecretValueResponse.builder().secretString(SECRET_VALUE).name(SECRET_NAME).build();
+        GetSecretValueResponse mockResult = GetSecretValueResponse.builder()
+                .secretString(SECRET_VALUE)
+                .arn(ARN)
+                .createdDate(Instant.now())
+                .versionId(UUID.randomUUID().toString())
+                .versionStages(Arrays.asList(new String[]{LATEST_LABEL}))
+                .name(SECRET_NAME)
+                .build();
         when(mockAwsClient.getSecretValue(any(GetSecretValueRequest.class))).thenReturn(mockResult);
         AWSSecretClient cloud = new AWSSecretClient(mockAwsClient);
         GetSecretValueRequest request = GetSecretValueRequest.builder().secretId(SECRET_NAME).versionStage(LATEST_LABEL).build();
@@ -66,11 +78,90 @@ class AWSSecretClientTest {
         AWSSecretClient cloud = new AWSSecretClient(mockAwsClient);
         // empty secret
         GetSecretValueRequest emptyRequest = GetSecretValueRequest.builder().versionStage(LATEST_LABEL).build();
-        assertThrows(IllegalArgumentException.class, () -> cloud.getSecret(emptyRequest));
+        assertThrows(SecretManagerException.class, () -> cloud.getSecret(emptyRequest));
 
         // empty secret
         GetSecretValueRequest emptyVersionAndLabel = GetSecretValueRequest.builder().secretId(SECRET_NAME).build();
-        assertThrows(IllegalArgumentException.class, () -> cloud.getSecret(emptyVersionAndLabel));
+        assertThrows(SecretManagerException.class, () -> cloud.getSecret(emptyVersionAndLabel));
+    }
+
+    @Test
+    void GIVEN_aws_client_throws_WHEN_cloud_returns_invalid_secret_THEN_valid_exception_returned() throws SecretManagerException {
+        AWSSecretClient cloud = new AWSSecretClient(mockAwsClient);
+        // empty secret
+        GetSecretValueRequest request = GetSecretValueRequest.builder().secretId(SECRET_NAME).versionStage(LATEST_LABEL).build();
+        // Create a result without arn
+        GetSecretValueResponse mockResultWithoutArn = GetSecretValueResponse.builder()
+                .secretString(SECRET_VALUE)
+                .createdDate(Instant.now())
+                .versionId(UUID.randomUUID().toString())
+                .versionStages(Arrays.asList(new String[]{LATEST_LABEL}))
+                .name(SECRET_NAME)
+                .build();
+
+        when(mockAwsClient.getSecretValue(any(GetSecretValueRequest.class))).thenReturn(mockResultWithoutArn);
+        assertThrows(SecretManagerException.class, () -> cloud.getSecret(request));
+
+        GetSecretValueResponse mockResultWithoutName = GetSecretValueResponse.builder()
+                .secretString(SECRET_VALUE)
+                .createdDate(Instant.now())
+                .versionId(UUID.randomUUID().toString())
+                .versionStages(Arrays.asList(new String[]{LATEST_LABEL}))
+                .arn(ARN)
+                .build();
+        when(mockAwsClient.getSecretValue(any(GetSecretValueRequest.class))).thenReturn(mockResultWithoutName);
+        assertThrows(SecretManagerException.class, () -> cloud.getSecret(request));
+
+        GetSecretValueResponse mockResultWithoutVersionId = GetSecretValueResponse.builder()
+                .secretString(SECRET_VALUE)
+                .createdDate(Instant.now())
+                .name(SECRET_NAME)
+                .versionStages(Arrays.asList(new String[]{LATEST_LABEL}))
+                .arn(ARN)
+                .build();
+        when(mockAwsClient.getSecretValue(any(GetSecretValueRequest.class))).thenReturn(mockResultWithoutVersionId);
+        assertThrows(SecretManagerException.class, () -> cloud.getSecret(request));
+
+        GetSecretValueResponse mockResultWithoutSecretString = GetSecretValueResponse.builder()
+                .versionId(UUID.randomUUID().toString())
+                .createdDate(Instant.now())
+                .name(SECRET_NAME)
+                .versionStages(Arrays.asList(new String[]{LATEST_LABEL}))
+                .arn(ARN)
+                .build();
+        when(mockAwsClient.getSecretValue(any(GetSecretValueRequest.class))).thenReturn(mockResultWithoutSecretString);
+        assertThrows(SecretManagerException.class, () -> cloud.getSecret(request));
+
+        GetSecretValueResponse mockResultWithoutVersionLabels = GetSecretValueResponse.builder()
+                .secretString(SECRET_VALUE)
+                .createdDate(Instant.now())
+                .name(SECRET_NAME)
+                .versionId(UUID.randomUUID().toString())
+                .arn(ARN)
+                .build();
+        when(mockAwsClient.getSecretValue(any(GetSecretValueRequest.class))).thenReturn(mockResultWithoutVersionLabels);
+        assertThrows(SecretManagerException.class, () -> cloud.getSecret(request));
+
+        GetSecretValueResponse mockResultWithoutDate = GetSecretValueResponse.builder()
+                .secretString(SECRET_VALUE)
+                .versionStages(Arrays.asList(new String[]{LATEST_LABEL}))
+                .name(SECRET_NAME)
+                .versionId(UUID.randomUUID().toString())
+                .arn(ARN)
+                .build();
+        when(mockAwsClient.getSecretValue(any(GetSecretValueRequest.class))).thenReturn(mockResultWithoutDate);
+        assertThrows(SecretManagerException.class, () -> cloud.getSecret(request));
+
+        GetSecretValueResponse mockResultWithEmptyLabels = GetSecretValueResponse.builder()
+                .secretString(SECRET_VALUE)
+                .createdDate(Instant.now())
+                .name(SECRET_NAME)
+                .versionStages(Arrays.asList(new String[]{}))
+                .versionId(UUID.randomUUID().toString())
+                .arn(ARN)
+                .build();
+        when(mockAwsClient.getSecretValue(any(GetSecretValueRequest.class))).thenReturn(mockResultWithEmptyLabels);
+        assertThrows(SecretManagerException.class, () -> cloud.getSecret(request));
 
     }
 }

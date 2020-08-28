@@ -13,7 +13,6 @@ import com.aws.iot.evergreen.kernel.Kernel;
 import com.aws.iot.evergreen.testcommons.testutilities.EGExtension;
 import com.aws.iot.greengrass.secretmanager.exception.SecretManagerException;
 import org.junit.jupiter.api.AfterEach;
-import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.junit.jupiter.api.extension.ExtensionContext;
@@ -34,6 +33,7 @@ import static org.hamcrest.Matchers.hasItem;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.when;
 
 @ExtendWith({MockitoExtension.class, EGExtension.class})
@@ -53,14 +53,12 @@ public class SecretManagerServiceTest {
     @Mock
     SecretManager mockSecretManager;
 
-
-    @BeforeEach
-    void setup() throws InterruptedException {
+    void startKernelWithConfig(String configFile, State expectedState) throws InterruptedException {
         CountDownLatch secretManagerRunning = new CountDownLatch(1);
         kernel = new Kernel();
-        kernel.parseArgs("-r", rootDir.toAbsolutePath().toString(), "-i", getClass().getResource("config.yaml").toString());
+        kernel.parseArgs("-r", rootDir.toAbsolutePath().toString(), "-i", getClass().getResource(configFile).toString());
         kernel.getContext().addGlobalStateChangeListener((EvergreenService service, State was, State newState) -> {
-            if (service.getName().equals(SecretManagerService.SECRET_MANAGER_SERVICE_NAME) && service.getState().equals(State.RUNNING)) {
+            if (service.getName().equals(SecretManagerService.SECRET_MANAGER_SERVICE_NAME) && service.getState().equals(expectedState)) {
                 secretManagerRunning.countDown();
             }
         });
@@ -93,7 +91,28 @@ public class SecretManagerServiceTest {
     }
 
     @Test
-    void GIVEN_secret_service_WHEN_handler_called_THEN_correct_response_returned(ExtensionContext context) throws Exception {
+    void GIVEN_secret_service_WHEN_started_with_bad_parameter_config_THEN_starts_successfully(ExtensionContext context) throws InterruptedException {
+        ignoreExceptionOfType(context, com.fasterxml.jackson.core.JsonParseException.class);
+        startKernelWithConfig("badConfig.yaml", State.RUNNING);
+    }
+
+    @Test
+    void GIVEN_secret_service_WHEN_load_secret_fails_THEN_service_errors(ExtensionContext context) throws Exception {
+        ignoreExceptionOfType(context, com.aws.iot.greengrass.secretmanager.exception.SecretManagerException.class);
+
+        doThrow(SecretManagerException.class).when(mockSecretManager).loadSecretsFromLocalStore();
+        startKernelWithConfig("config.yaml", State.ERRORED);
+    }
+
+    @Test
+    void GIVEN_secret_service_WHEN_started_without_secrets_THEN_starts_successfully(ExtensionContext context) throws InterruptedException {
+        ignoreExceptionOfType(context, com.fasterxml.jackson.core.JsonParseException.class);
+        startKernelWithConfig("emptyParameterConfig.yaml", State.RUNNING);
+    }
+
+    @Test
+    void GIVEN_secret_service_WHEN_handler_called_THEN_correct_response_returned() throws Exception {
+        startKernelWithConfig("config.yaml", State.RUNNING);
         com.aws.iot.evergreen.ipc.services.secret.GetSecretValueResult mockSecretResponse1 =
                 com.aws.iot.evergreen.ipc.services.secret.GetSecretValueResult.builder().secretString("secret1")
                 .secretId(SECRET_ID)
@@ -113,11 +132,11 @@ public class SecretManagerServiceTest {
         assertThat(returnedResult.getVersionStages(), hasItem(CURRENT_LABEL));
         assertThat(returnedResult.getVersionStages(), hasItem(VERSION_LABEL));
         assertEquals(SecretResponseStatus.Success, returnedResult.getStatus());
-
     }
 
     @Test
     void GIVEN_secret_service_WHEN_handler_call_errors_out_THEN_correct_response_returned(ExtensionContext context) throws Exception {
+        startKernelWithConfig("config.yaml", State.RUNNING);
         ignoreExceptionOfType(context, com.fasterxml.jackson.databind.exc.MismatchedInputException.class);
         FrameReader.Message inputMessage = getInvalidInputMessage();
         Future<FrameReader.Message> fut = kernel.getContext().get(SecretManagerService.class).handleMessage(inputMessage, mockContext);

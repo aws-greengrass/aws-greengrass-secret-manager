@@ -1,12 +1,9 @@
 package com.aws.iot.greengrass.secretmanager;
 
-import java.util.List;
-import java.util.Optional;
+import com.aws.iot.greengrass.secretmanager.exception.SecretManagerException;
 
-public interface SecretDao<K, V> {
-    Optional<V> get(K id);
+public interface SecretDao<V> {
+    V getAll() throws SecretManagerException;
 
-    List<V> getAll();
-
-    void save(K id, V value);
+    void saveAll(V list) throws SecretManagerException;
 }

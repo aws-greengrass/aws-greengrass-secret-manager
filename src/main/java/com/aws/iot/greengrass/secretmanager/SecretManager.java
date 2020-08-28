@@ -4,19 +4,39 @@ import com.aws.iot.evergreen.ipc.services.secret.SecretResponseStatus;
 import com.aws.iot.evergreen.logging.api.Logger;
 import com.aws.iot.evergreen.logging.impl.LogManager;
 import com.aws.iot.evergreen.util.Utils;
+import com.aws.iot.greengrass.secretmanager.crypto.Crypter;
+import com.aws.iot.greengrass.secretmanager.crypto.KeyChain;
+import com.aws.iot.greengrass.secretmanager.crypto.MasterKey;
+import com.aws.iot.greengrass.secretmanager.crypto.PemFile;
+import com.aws.iot.greengrass.secretmanager.crypto.RSAMasterKey;
+import com.aws.iot.greengrass.secretmanager.exception.SecretCryptoException;
+import com.aws.iot.greengrass.secretmanager.exception.SecretManagerException;
+import com.aws.iot.greengrass.secretmanager.kernel.KernelClient;
+import com.aws.iot.greengrass.secretmanager.model.AWSSecretResponse;
 import com.aws.iot.greengrass.secretmanager.model.SecretConfiguration;
+import com.aws.iot.greengrass.secretmanager.model.SecretDocument;
 import software.amazon.awssdk.services.secretsmanager.model.GetSecretValueRequest;
 import software.amazon.awssdk.services.secretsmanager.model.GetSecretValueResponse;
 
-import java.util.HashMap;
+import java.nio.charset.StandardCharsets;
+import java.security.PrivateKey;
+import java.security.PublicKey;
+import java.time.Instant;
+import java.util.ArrayList;
+import java.util.Base64;
 import java.util.HashSet;
 import java.util.List;
-import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.regex.Pattern;
 import javax.inject.Inject;
 
+/**
+ * Class which holds the business logic for secret management. This class always holds a copy of
+ * actual AWS secrets response in memory to serve requests. Since v1 and v2 IPC models are different
+ * this class directly translates the AWS responses in memory to v1/v2 models as part of IPC requests.
+ * Secrets are stored encrypted for availability across restarts. In memory copy is always plain text.
+ */
 public class SecretManager {
     private static final String LATEST_LABEL = "AWSCURRENT";
     public static final String VALID_SECRET_ARN_PATTERN =
@@ -28,20 +48,53 @@ public class SecretManager {
     private ConcurrentHashMap<String, String> nametoArnMap = new ConcurrentHashMap<>();
 
     private final AWSSecretClient secretClient;
-    private final SecretDao secretDao;
+    private final SecretDao<SecretDocument> secretDao;
+    private final Crypter crypter;
 
+    /**
+     * Constructor.
+     * @param secretClient client for aws secrets.
+     * @param kernelClient client for kernel
+     * @param dao          dao for persistent store.
+     * @throws SecretCryptoException when unable to initialize.
+     */
     @Inject
-    SecretManager(AWSSecretClient secretClient, MemorySecretDao dao) {
+    SecretManager(AWSSecretClient secretClient, KernelClient kernelClient, FileSecretDao dao)
+            throws SecretCryptoException {
         this.secretDao = dao;
         this.secretClient = secretClient;
+        String keyPath = kernelClient.getPrivateKeyPath();
+        String certPath = kernelClient.getCertPath();
+
+        PublicKey publicKey = PemFile.generatePublicKeyFromCert(certPath);
+        PrivateKey privateKey = PemFile.generatePrivateKey(keyPath);
+
+        MasterKey masterKey = RSAMasterKey.createInstance(publicKey, privateKey);
+        KeyChain keyChain = new KeyChain();
+        keyChain.addMasterKey(masterKey);
+        this.crypter = new Crypter(keyChain);
+    }
+
+    /**
+     * Constructor for unit testing.
+     * @param secretClient client for aws secrets.
+     * @param crypter      crypter for secrets.
+     * @param dao          dao for persistent store.
+     */
+    SecretManager(AWSSecretClient secretClient, Crypter crypter, FileSecretDao dao) {
+        this.secretDao = dao;
+        this.secretClient = secretClient;
+        this.crypter = crypter;
     }
 
     /**
      * Syncs secret manager by downloading secrets from cloud and then stores it locally.
-     * This is used when configuration changes and secrets are refetched.
+     * This is used when configuration changes and secrets have to be re downloaded.
      * @param configuredSecrets List of secrets that are to be downloaded
+     * @throws SecretManagerException when there are issues reading/writing to disk
      */
-    public void syncFromCloud(List<SecretConfiguration> configuredSecrets) {
+    public void syncFromCloud(List<SecretConfiguration> configuredSecrets) throws SecretManagerException {
+        List<AWSSecretResponse> downloadedSecrets = new ArrayList<>();
         for (SecretConfiguration secretConfig : configuredSecrets) {
             String secretArn = secretConfig.getArn();
             if (!Pattern.matches(VALID_SECRET_ARN_PATTERN, secretArn)) {
@@ -60,28 +113,38 @@ public class SecretManager {
                 try {
                     GetSecretValueResponse result = secretClient.getSecret(request);
                     // Save the secrets to local store for offline access
-                    // TODO: Move to persistent storage
-                    // TODO: Support encrypted secrets
-                    secretDao.save(secretArn, result);
+                    byte[] encryptedSecret = crypter.encrypt(result.secretString().getBytes(StandardCharsets.UTF_8),
+                            result.arn());
+                    // reuse all fields except the secret value, replace secret value with encrypted value
+                    AWSSecretResponse encryptedResult = AWSSecretResponse.builder()
+                            .encryptedSecretString(Base64.getEncoder().encodeToString(encryptedSecret))
+                            .name(result.name())
+                            .arn(result.arn())
+                            .createdDate(result.createdDate().toEpochMilli())
+                            .versionId(result.versionId())
+                            .versionStages(result.versionStages())
+                            .build();
+                    downloadedSecrets.add(encryptedResult);
                 } catch (Throwable e) {
                     logger.atWarn().kv("Secret ", secretArn).log("Could not fetch secret from cloud", e);
                     continue;
                 }
             }
         }
-
+        secretDao.saveAll(SecretDocument.builder().secrets(downloadedSecrets).build());
         // Once the secrets are finished downloading, load it locally
         loadSecretsFromLocalStore();
     }
 
     /**
      * load the secrets from a local store. This is used across restarts to load secrets from store.
+     * @throws SecretManagerException when there are issues reading from disk
      */
-    public void loadSecretsFromLocalStore() {
+    public void loadSecretsFromLocalStore() throws SecretManagerException {
         // read the db
-        List<GetSecretValueResponse> secrets = secretDao.getAll();
-        for (GetSecretValueResponse secretResult : secrets) {
-            nametoArnMap.put(secretResult.name(), secretResult.arn());
+        List<AWSSecretResponse> secrets = secretDao.getAll().getSecrets();
+        for (AWSSecretResponse secretResult : secrets) {
+            nametoArnMap.put(secretResult.getName(), secretResult.getArn());
             loadCache(secretResult);
         }
     }
@@ -94,13 +157,33 @@ public class SecretManager {
     * arn1:l1 -> secret
     * arn1:l2 -> secret
     */
-    private void loadCache(GetSecretValueResponse getSecretValueResponse) {
-        String secretArn = getSecretValueResponse.arn();
-        cache.put(secretArn, getSecretValueResponse);
-        cache.put(secretArn + getSecretValueResponse.versionId(), getSecretValueResponse);
+    private void loadCache(AWSSecretResponse awsSecretResponse) throws SecretManagerException {
+        GetSecretValueResponse decryptedResponse = null;
+        try {
+            byte[] decryptedSecret = crypter.decrypt(
+                    Base64.getDecoder().decode(awsSecretResponse.getEncryptedSecretString()),
+                    awsSecretResponse.getArn());
+            // reuse all fields except the secret value, replace that with decrypted value
+            decryptedResponse = GetSecretValueResponse.builder()
+                    .secretString(new String(decryptedSecret, StandardCharsets.UTF_8))
+                    .name(awsSecretResponse.getName())
+                    .arn(awsSecretResponse.getArn())
+                    .createdDate(Instant.ofEpochMilli(awsSecretResponse.getCreatedDate()))
+                    .versionId(awsSecretResponse.getVersionId())
+                    .versionStages(awsSecretResponse.getVersionStages())
+                    .build();
+        } catch (SecretCryptoException e) {
+            // This should never happen ideally
+            logger.atError().kv("secret",
+                    awsSecretResponse.getArn()).cause(e).log("Unable to decrypt secret, skip loading in cache");
+            throw new SecretManagerException("Cannot load secret from disk");
+        }
+        String secretArn = decryptedResponse.arn();
+        cache.put(secretArn, decryptedResponse);
+        cache.put(secretArn + decryptedResponse.versionId(), decryptedResponse);
         // load all labels attached with this version of secret
-        for (String label : getSecretValueResponse.versionStages()) {
-            cache.put(secretArn + label, getSecretValueResponse);
+        for (String label : decryptedResponse.versionStages()) {
+            cache.put(secretArn + label, decryptedResponse);
         }
     }
 
@@ -117,7 +200,7 @@ public class SecretManager {
     }
 
     /**
-     * get a secret.
+     * Get a secret. Secrets are stored in memory and only loaded from disk on reload or when synced from cloud.
      * @param request IPC request from kernel to get secret
      * @return secret IPC response containing secret and metadata
      */
@@ -125,7 +208,7 @@ public class SecretManager {
         getSecret(com.aws.iot.evergreen.ipc.services.secret.GetSecretValueRequest request) {
 
         // TODO: Add support for secret binary
-        // TODO: ADd support for v1 IPC
+        // TODO: Add support for v1 IPC
         String secretId = request.getSecretId();
         String arn = secretId;
         if (Utils.isEmpty(secretId)) {
