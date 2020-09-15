@@ -6,7 +6,6 @@ import com.aws.iot.evergreen.util.Coerce;
 import com.aws.iot.evergreen.util.Utils;
 import com.aws.iot.greengrass.secretmanager.exception.SecretManagerException;
 import software.amazon.awssdk.regions.Region;
-import software.amazon.awssdk.regions.providers.DefaultAwsRegionProviderChain;
 import software.amazon.awssdk.services.secretsmanager.SecretsManagerClient;
 import software.amazon.awssdk.services.secretsmanager.model.DecryptionFailureException;
 import software.amazon.awssdk.services.secretsmanager.model.GetSecretValueRequest;
@@ -29,12 +28,7 @@ public class AWSSecretClient {
      */
     @Inject
     public AWSSecretClient(LazyCredentialProvider credentialProvider, DeviceConfiguration deviceConfiguration) {
-        Region region;
-        try {
-            region = new DefaultAwsRegionProviderChain().getRegion();
-        } catch (RuntimeException ignored) {
-            region = Region.of(Coerce.toString(deviceConfiguration.getAWSRegion()));
-        }
+        Region region = Region.of(Coerce.toString(deviceConfiguration.getAWSRegion()));
         this.secretsManagerClient = SecretsManagerClient.builder().credentialsProvider(credentialProvider)
                 .region(region).build();
     }

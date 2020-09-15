@@ -18,7 +18,7 @@ import com.aws.iot.evergreen.ipc.services.secret.GetSecretValueRequest;
 import com.aws.iot.evergreen.ipc.services.secret.SecretClientOpCodes;
 import com.aws.iot.evergreen.ipc.services.secret.SecretGenericResponse;
 import com.aws.iot.evergreen.ipc.services.secret.SecretResponseStatus;
-import com.aws.iot.evergreen.kernel.EvergreenService;
+import com.aws.iot.evergreen.kernel.PluginService;
 import com.aws.iot.evergreen.util.Coerce;
 import com.aws.iot.greengrass.secretmanager.exception.SecretManagerException;
 import com.aws.iot.greengrass.secretmanager.kernel.KernelClient;
@@ -37,11 +37,10 @@ import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.Future;
 import javax.inject.Inject;
 
-import static com.aws.iot.evergreen.deployment.bootstrap.BootstrapSuccessCode.REQUEST_RESTART;
 import static com.aws.iot.evergreen.packagemanager.KernelConfigResolver.PARAMETERS_CONFIG_KEY;
 
 @ImplementsService(name = SecretManagerService.SECRET_MANAGER_SERVICE_NAME)
-public class SecretManagerService extends EvergreenService {
+public class SecretManagerService extends PluginService {
 
     public static final String SECRET_MANAGER_SERVICE_NAME = "aws.greengrass.secret.manager";
     public static final String SECRETS_TOPIC = "cloudSecrets";
@@ -136,11 +135,6 @@ public class SecretManagerService extends EvergreenService {
             return;
         }
         reportState(State.RUNNING);
-    }
-
-    @Override
-    public int bootstrap() {
-        return REQUEST_RESTART;
     }
 
     /**
