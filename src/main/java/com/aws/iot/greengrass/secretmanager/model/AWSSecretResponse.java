@@ -7,7 +7,6 @@ import lombok.Data;
 import lombok.NoArgsConstructor;
 import lombok.NonNull;
 
-import java.time.Instant;
 import java.util.List;
 
 @JsonInclude(JsonInclude.Include.NON_NULL)
@@ -23,7 +22,7 @@ public class AWSSecretResponse {
     @NonNull
     String versionId;
     String encryptedSecretString;
-    String encryptedSecretBytes;
+    String encryptedSecretBinary;
     @NonNull
     List<String> versionStages;
     @NonNull

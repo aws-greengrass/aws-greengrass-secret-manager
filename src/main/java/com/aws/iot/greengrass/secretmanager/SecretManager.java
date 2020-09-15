@@ -15,6 +15,7 @@ import com.aws.iot.greengrass.secretmanager.kernel.KernelClient;
 import com.aws.iot.greengrass.secretmanager.model.AWSSecretResponse;
 import com.aws.iot.greengrass.secretmanager.model.SecretConfiguration;
 import com.aws.iot.greengrass.secretmanager.model.SecretDocument;
+import software.amazon.awssdk.core.SdkBytes;
 import software.amazon.awssdk.services.secretsmanager.model.GetSecretValueRequest;
 import software.amazon.awssdk.services.secretsmanager.model.GetSecretValueResponse;
 
@@ -113,11 +114,24 @@ public class SecretManager {
                 try {
                     GetSecretValueResponse result = secretClient.getSecret(request);
                     // Save the secrets to local store for offline access
-                    byte[] encryptedSecret = crypter.encrypt(result.secretString().getBytes(StandardCharsets.UTF_8),
-                            result.arn());
+                    String encodedSecretString = null;
+                    if (result.secretString() != null) {
+                        byte[] encryptedSecretString = crypter.encrypt(
+                                result.secretString().getBytes(StandardCharsets.UTF_8),
+                                result.arn());
+                        encodedSecretString = Base64.getEncoder().encodeToString(encryptedSecretString);
+                    }
+                    String encodedSecretBinary = null;
+                    if (result.secretBinary() != null) {
+                        byte[] encryptedSecretBinary = crypter.encrypt(
+                                result.secretBinary().asByteArray(),
+                                result.arn());
+                        encodedSecretBinary = Base64.getEncoder().encodeToString(encryptedSecretBinary);
+                    }
                     // reuse all fields except the secret value, replace secret value with encrypted value
                     AWSSecretResponse encryptedResult = AWSSecretResponse.builder()
-                            .encryptedSecretString(Base64.getEncoder().encodeToString(encryptedSecret))
+                            .encryptedSecretString(encodedSecretString)
+                            .encryptedSecretBinary(encodedSecretBinary)
                             .name(result.name())
                             .arn(result.arn())
                             .createdDate(result.createdDate().toEpochMilli())
@@ -160,12 +174,25 @@ public class SecretManager {
     private void loadCache(AWSSecretResponse awsSecretResponse) throws SecretManagerException {
         GetSecretValueResponse decryptedResponse = null;
         try {
-            byte[] decryptedSecret = crypter.decrypt(
-                    Base64.getDecoder().decode(awsSecretResponse.getEncryptedSecretString()),
-                    awsSecretResponse.getArn());
-            // reuse all fields except the secret value, replace that with decrypted value
+            String decryptedSecretString = null;
+            if (awsSecretResponse.getEncryptedSecretString() != null) {
+                byte[] decryptedSecret = crypter.decrypt(
+                        Base64.getDecoder().decode(awsSecretResponse.getEncryptedSecretString()),
+                        awsSecretResponse.getArn());
+                decryptedSecretString = new String(decryptedSecret, StandardCharsets.UTF_8);
+            }
+
+            SdkBytes decryptedSecretBinary = null;
+            if (awsSecretResponse.getEncryptedSecretBinary() != null) {
+                byte[] decryptedSecret = crypter.decrypt(
+                        Base64.getDecoder().decode(awsSecretResponse.getEncryptedSecretBinary()),
+                        awsSecretResponse.getArn());
+                decryptedSecretBinary = SdkBytes.fromByteArray(decryptedSecret);
+            }
+
             decryptedResponse = GetSecretValueResponse.builder()
-                    .secretString(new String(decryptedSecret, StandardCharsets.UTF_8))
+                    .secretString(decryptedSecretString)
+                    .secretBinary(decryptedSecretBinary)
                     .name(awsSecretResponse.getName())
                     .arn(awsSecretResponse.getArn())
                     .createdDate(Instant.ofEpochMilli(awsSecretResponse.getCreatedDate()))
@@ -189,10 +216,15 @@ public class SecretManager {
 
     private com.aws.iot.evergreen.ipc.services.secret.GetSecretValueResult
         translateModeltoIpc(GetSecretValueResponse response) {
+        byte[] secretBinary = null;
+        if (response.secretBinary() != null) {
+            secretBinary = response.secretBinary().asByteArray();
+        }
         return com.aws.iot.evergreen.ipc.services.secret.GetSecretValueResult
                 .builder()
                 .secretId(response.arn())
                 .secretString(response.secretString())
+                .secretBinary(secretBinary)
                 .versionId(response.versionId())
                 .versionStages(response.versionStages())
                 .responseStatus(SecretResponseStatus.Success)
@@ -207,7 +239,6 @@ public class SecretManager {
     public com.aws.iot.evergreen.ipc.services.secret.GetSecretValueResult
         getSecret(com.aws.iot.evergreen.ipc.services.secret.GetSecretValueRequest request) {
 
-        // TODO: Add support for secret binary
         // TODO: Add support for v1 IPC
         String secretId = request.getSecretId();
         String arn = secretId;

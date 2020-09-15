@@ -1,8 +1,11 @@
 package com.aws.iot.greengrass.secretmanager;
 
+import com.aws.iot.evergreen.deployment.DeviceConfiguration;
 import com.aws.iot.evergreen.tes.LazyCredentialProvider;
+import com.aws.iot.evergreen.util.Coerce;
 import com.aws.iot.evergreen.util.Utils;
 import com.aws.iot.greengrass.secretmanager.exception.SecretManagerException;
+import software.amazon.awssdk.regions.Region;
 import software.amazon.awssdk.services.secretsmanager.SecretsManagerClient;
 import software.amazon.awssdk.services.secretsmanager.model.DecryptionFailureException;
 import software.amazon.awssdk.services.secretsmanager.model.GetSecretValueRequest;
@@ -19,13 +22,15 @@ public class AWSSecretClient {
     private final SecretsManagerClient secretsManagerClient;
 
     /**
-     * Constructor which utilizes TES for initializing AWS client.
-     * @param credentialProvider TES credential provider
+     * Constructor which utilizes  TES for initializing AWS client.
+     * @param credentialProvider   TES credential provider
+     * @param deviceConfiguration  device configuration properties from kernel
      */
     @Inject
-    public AWSSecretClient(LazyCredentialProvider credentialProvider) {
+    public AWSSecretClient(LazyCredentialProvider credentialProvider, DeviceConfiguration deviceConfiguration) {
+        Region region = Region.of(Coerce.toString(deviceConfiguration.getAWSRegion()));
         this.secretsManagerClient = SecretsManagerClient.builder().credentialsProvider(credentialProvider)
-                .build();
+                .region(region).build();
     }
 
     // Constructor used for testing.
@@ -41,8 +46,9 @@ public class AWSSecretClient {
      */
     public GetSecretValueResponse getSecret(GetSecretValueRequest request) throws SecretManagerException {
         // TODO: Add retry for fetches
-        String errorMsg = String.format("Exception occurred while fetching secrets from AWSSecretsManager for key %s",
-                request.secretId());
+        String errorMsg = String.format("Exception occurred while fetching secrets "
+                        + "from AWSSecretsManager for secret: %s, version: %s, label: %s",
+                request.secretId(), request.versionId(), request.versionStage());
         try {
             validateInput(request);
             GetSecretValueResponse response = secretsManagerClient.getSecretValue(request);
@@ -55,7 +61,7 @@ public class AWSSecretClient {
                 | InvalidRequestException
                 | IllegalArgumentException e) {
             // TODO: Separate out network errors for retry and try hard for secret download in that case.
-            throw new SecretManagerException(errorMsg);
+            throw new SecretManagerException(errorMsg, e);
         }
     }
 

@@ -1,5 +1,8 @@
 package com.aws.iot.greengrass.secretmanager;
 
+import com.aws.iot.evergreen.auth.AuthorizationHandler;
+import com.aws.iot.evergreen.auth.Permission;
+import com.aws.iot.evergreen.auth.exceptions.AuthorizationException;
 import com.aws.iot.evergreen.config.Topic;
 import com.aws.iot.evergreen.config.Topics;
 import com.aws.iot.evergreen.config.WhatHappened;
@@ -15,7 +18,7 @@ import com.aws.iot.evergreen.ipc.services.secret.GetSecretValueRequest;
 import com.aws.iot.evergreen.ipc.services.secret.SecretClientOpCodes;
 import com.aws.iot.evergreen.ipc.services.secret.SecretGenericResponse;
 import com.aws.iot.evergreen.ipc.services.secret.SecretResponseStatus;
-import com.aws.iot.evergreen.kernel.EvergreenService;
+import com.aws.iot.evergreen.kernel.PluginService;
 import com.aws.iot.evergreen.util.Coerce;
 import com.aws.iot.greengrass.secretmanager.exception.SecretManagerException;
 import com.aws.iot.greengrass.secretmanager.kernel.KernelClient;
@@ -26,22 +29,22 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.dataformat.cbor.databind.CBORMapper;
 
 import java.io.IOException;
-import java.nio.file.Files;
-import java.nio.file.Path;
 import java.util.ArrayList;
+import java.util.Arrays;
+import java.util.HashSet;
 import java.util.List;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.Future;
 import javax.inject.Inject;
 
-import static com.aws.iot.evergreen.deployment.bootstrap.BootstrapSuccessCode.REQUEST_RESTART;
 import static com.aws.iot.evergreen.packagemanager.KernelConfigResolver.PARAMETERS_CONFIG_KEY;
 
 @ImplementsService(name = SecretManagerService.SECRET_MANAGER_SERVICE_NAME)
-public class SecretManagerService extends EvergreenService {
+public class SecretManagerService extends PluginService {
 
     public static final String SECRET_MANAGER_SERVICE_NAME = "aws.greengrass.secret.manager";
     public static final String SECRETS_TOPIC = "cloudSecrets";
+    public static final String SECRETS_AUTHORIZATION_OPCODE = "getSecret";
     private static final ObjectMapper CBOR_MAPPER = new CBORMapper();
     private static final ObjectMapper OBJECT_MAPPER =
             new ObjectMapper().configure(MapperFeature.ACCEPT_CASE_INSENSITIVE_PROPERTIES, true);
@@ -50,23 +53,27 @@ public class SecretManagerService extends EvergreenService {
     private final SecretManager secretManager;
     private final IPCRouter router;
     private final KernelClient kernelClient;
+    private AuthorizationHandler authorizationHandler;
 
     /**
      * Constructor for SecretManagerService Service.
-     * @param topics        root Configuration topic for this service
-     * @param router        router for registering the IPC callback
-     * @param kernelClient  Kernel client for accessing kernel state and methods
-     * @param secretManager secret manager which manages secrets
+     * @param topics                root Configuration topic for this service
+     * @param router                router for registering the IPC callback
+     * @param kernelClient          Kernel client for accessing kernel state and methods
+     * @param secretManager         secret manager which manages secrets
+     * @param authorizationHandler  authorization handler
      */
     @Inject
     public SecretManagerService(Topics topics,
                                 IPCRouter router,
                                 SecretManager secretManager,
-                                KernelClient kernelClient) {
+                                KernelClient kernelClient,
+                                AuthorizationHandler authorizationHandler) {
         super(topics);
         this.router = router;
         this.secretManager = secretManager;
         this.kernelClient = kernelClient;
+        this.authorizationHandler = authorizationHandler;
         // TODO: Subscribe on thing key updates
         topics.lookup(PARAMETERS_CONFIG_KEY, SECRETS_TOPIC)
                 .subscribe(this::serviceChanged);
@@ -96,6 +103,15 @@ public class SecretManagerService extends EvergreenService {
         BuiltInServiceDestinationCode destination = BuiltInServiceDestinationCode.SECRET;
         super.postInject();
         try {
+            authorizationHandler.registerComponent(this.getName(), new HashSet<>(
+                    Arrays.asList(SECRETS_AUTHORIZATION_OPCODE)));
+        } catch (AuthorizationException e) {
+            logger.atError("initialize-secret-authorization-error", e)
+                    .kv(IPCRouter.DESTINATION_STRING, destination.name())
+                    .log("Failed to initialize the secret service with the Authorization module.");
+        }
+        
+        try {
             router.registerServiceCallback(destination.getValue(), this::handleMessage);
             logger.atInfo().setEventType("ipc-register-request-handler").addKeyValue("destination", destination.name())
                     .log();
@@ -121,11 +137,6 @@ public class SecretManagerService extends EvergreenService {
         reportState(State.RUNNING);
     }
 
-    @Override
-    public int bootstrap() {
-        return REQUEST_RESTART;
-    }
-
     /**
      * Handles secret API calls from IPC.
      * @param message  API message received from a client.
@@ -142,6 +153,9 @@ public class SecretManagerService extends EvergreenService {
                 case GET_SECRET:
                     GetSecretValueRequest request =
                             CBOR_MAPPER.readValue(applicationMessage.getPayload(), GetSecretValueRequest.class);
+                    doAuthorization(opCode.toString(), context.getServiceName(), request.getSecretId());
+                    logger.atInfo().event("secret-access").kv("Principal", context.getServiceName())
+                            .kv("secret", request.getSecretId()).log("requested secret");
                     response = secretManager.getSecret(request);
                     response.setStatus(SecretResponseStatus.Success);
                     break;
@@ -154,22 +168,35 @@ public class SecretManagerService extends EvergreenService {
                     .payload(CBOR_MAPPER.writeValueAsBytes(response)).build();
             fut.complete(new FrameReader.Message(responseMessage.toByteArray()));
         } catch (Throwable t) {
-            logger.atError().setEventType("secret-ipc-error").setCause(t).log("Failed to handle message");
+            logger.atError().setEventType("secret-error").setCause(t).log("Failed to handle message");
+            SecretResponseStatus status = SecretResponseStatus.InternalError;
+            if (t instanceof AuthorizationException) {
+                status = SecretResponseStatus.Unauthorized;
+            }
+            SecretGenericResponse response = new SecretGenericResponse(status, t.getMessage());
             try {
-                SecretGenericResponse response =
-                        new SecretGenericResponse(SecretResponseStatus.InternalError, t.getMessage());
                 ApplicationMessage responseMessage =
                         ApplicationMessage.builder().version(applicationMessage.getVersion())
                                 .payload(CBOR_MAPPER.writeValueAsBytes(response)).build();
                 fut.complete(new FrameReader.Message(responseMessage.toByteArray()));
             } catch (IOException ex) {
-                logger.atError("secret-ipc-error", ex).log("Failed to send error response");
+                logger.atError("secret-error", ex).log("Failed to send error response");
             }
         }
         if (!fut.isDone()) {
             fut.completeExceptionally(new IPCException("Unable to serialize any responses"));
         }
         return fut;
+    }
+
+    private void doAuthorization(String opCode, String serviceName, String secretId) throws AuthorizationException {
+        authorizationHandler.isAuthorized(
+                this.getName(),
+                Permission.builder()
+                        .principal(serviceName)
+                        .operation(opCode.toLowerCase())
+                        .resource(secretId)
+                        .build());
     }
 
 }
