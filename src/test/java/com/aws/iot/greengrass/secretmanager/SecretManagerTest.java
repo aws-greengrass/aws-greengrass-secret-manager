@@ -26,6 +26,7 @@ import org.mockito.ArgumentCaptor;
 import org.mockito.Captor;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
+import software.amazon.awssdk.core.SdkBytes;
 import software.amazon.awssdk.services.secretsmanager.model.GetSecretValueResponse;
 
 import java.nio.charset.StandardCharsets;
@@ -40,7 +41,9 @@ import java.util.List;
 import java.util.UUID;
 
 import static com.aws.iot.evergreen.testcommons.testutilities.ExceptionLogProtector.ignoreExceptionOfType;
+import static org.junit.jupiter.api.Assertions.assertArrayEquals;
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
@@ -61,6 +64,8 @@ class SecretManagerTest {
 
     private static final String SECRET_VALUE_1 = "password";
     private static final String SECRET_VALUE_2 = "newPassword";
+    private static final byte[] SECRET_VALUE_BINARY_1 = SECRET_VALUE_1.getBytes();
+    private static final byte[] SECRET_VALUE_BINARY_2 = SECRET_VALUE_2.getBytes();
     private static final String SECRET_VERSION_1 = UUID.randomUUID().toString();
     private static final String SECRET_VERSION_2 = UUID.randomUUID().toString();
     private static final String SECRET_LABEL_1 = "Label1";
@@ -73,10 +78,9 @@ class SecretManagerTest {
 
     private String ENCRYPTED_SECRET_1;
     private String ENCRYPTED_SECRET_2;
+    private String ENCRYPTED_SECRET_BINARY_1;
+    private String ENCRYPTED_SECRET_BINARY_2;
     private Crypter crypter;
-
-    @TempDir
-    Path secretDir;
 
     @Mock
     private AWSSecretClient mockAWSSecretClient;
@@ -122,31 +126,58 @@ class SecretManagerTest {
                 .encodeToString(crypter.encrypt(SECRET_VALUE_1.getBytes(StandardCharsets.UTF_8), ARN_1));
         ENCRYPTED_SECRET_2 = Base64.getEncoder()
                 .encodeToString(crypter.encrypt(SECRET_VALUE_2.getBytes(StandardCharsets.UTF_8), ARN_2));
+        ENCRYPTED_SECRET_BINARY_1 = Base64.getEncoder()
+                .encodeToString(crypter.encrypt(SECRET_VALUE_BINARY_1, ARN_1));
+        ENCRYPTED_SECRET_BINARY_2 = Base64.getEncoder()
+                .encodeToString(crypter.encrypt(SECRET_VALUE_BINARY_2, ARN_2));
     }
 
     private GetSecretValueResponse getMockSecret(String name,
                                                  String arn,
                                                  Instant date,
                                                  String secretString,
+                                                 byte[] secretBinary,
                                                  String versionId,
                                                  List<String> versionStages) {
-        return GetSecretValueResponse.builder().name(name)
-                .arn(arn).createdDate(date).secretString(secretString).versionId(versionId)
-                .versionStages(versionStages).build();
+        if (secretBinary != null) {
+            return GetSecretValueResponse.builder().name(name)
+                    .arn(arn).createdDate(date).secretString(secretString)
+                    .secretBinary(SdkBytes.fromByteArray(secretBinary))
+                    .versionId(versionId)
+                    .versionStages(versionStages).build();
+        } else {
+            return GetSecretValueResponse.builder().name(name)
+                    .arn(arn).createdDate(date).secretString(secretString)
+                    .secretBinary(null)
+                    .versionId(versionId)
+                    .versionStages(versionStages).build();
+        }
     }
 
     private GetSecretValueResponse getMockSecretA() {
-        return getMockSecret(SECRET_NAME_1, ARN_1, SECRET_DATE_1, SECRET_VALUE_1, SECRET_VERSION_1,
+        return getMockSecret(SECRET_NAME_1, ARN_1, SECRET_DATE_1, SECRET_VALUE_1, SECRET_VALUE_BINARY_1, SECRET_VERSION_1,
+                Arrays.asList(new String[]{LATEST_LABEL, SECRET_LABEL_1}));
+    }
+
+    private GetSecretValueResponse getMockSecretAWithSecretString() {
+        return getMockSecret(SECRET_NAME_1, ARN_1, SECRET_DATE_1, SECRET_VALUE_1, null, SECRET_VERSION_1,
                 Arrays.asList(new String[]{LATEST_LABEL, SECRET_LABEL_1}));
     }
 
     private GetSecretValueResponse getMockSecretB() {
-        return getMockSecret(SECRET_NAME_2, ARN_2, SECRET_DATE_2, SECRET_VALUE_2, SECRET_VERSION_2,
+        return getMockSecret(SECRET_NAME_2, ARN_2, SECRET_DATE_2, SECRET_VALUE_2, SECRET_VALUE_BINARY_2, SECRET_VERSION_2,
                 Arrays.asList(new String[]{LATEST_LABEL, SECRET_LABEL_2}));
     }
+
+    private GetSecretValueResponse getMockSecretBWithSecretBinary() {
+        return getMockSecret(SECRET_NAME_2, ARN_2, SECRET_DATE_2, null, SECRET_VALUE_BINARY_2, SECRET_VERSION_2,
+                Arrays.asList(new String[]{LATEST_LABEL, SECRET_LABEL_2}));
+    }
+
     private AWSSecretResponse getMockDaoSecretA() {
         return AWSSecretResponse.builder().name(SECRET_NAME_1).arn(ARN_1).createdDate(SECRET_DATE_1.toEpochMilli())
                 .encryptedSecretString(ENCRYPTED_SECRET_1)
+                .encryptedSecretBinary(ENCRYPTED_SECRET_BINARY_1)
                 .versionStages(Arrays.asList(new String[]{LATEST_LABEL, SECRET_LABEL_1}))
                 .versionId(SECRET_VERSION_1).build();
     }
@@ -154,8 +185,46 @@ class SecretManagerTest {
     private AWSSecretResponse getMockDaoSecretB() {
         return AWSSecretResponse.builder().name(SECRET_NAME_2).arn(ARN_2).createdDate(SECRET_DATE_2.toEpochMilli())
                 .encryptedSecretString(ENCRYPTED_SECRET_2)
+                .encryptedSecretBinary(ENCRYPTED_SECRET_BINARY_2)
                 .versionStages(Arrays.asList(new String[]{LATEST_LABEL, SECRET_LABEL_2}))
                 .versionId(SECRET_VERSION_2).build();
+    }
+
+    private AWSSecretResponse getMockDaoSecretAWithSecretString() {
+        return AWSSecretResponse.builder().name(SECRET_NAME_1).arn(ARN_1).createdDate(SECRET_DATE_1.toEpochMilli())
+                .encryptedSecretString(ENCRYPTED_SECRET_1)
+                .versionStages(Arrays.asList(new String[]{LATEST_LABEL, SECRET_LABEL_1}))
+                .versionId(SECRET_VERSION_1).build();
+    }
+
+    private AWSSecretResponse getMockDaoSecretBWithSecretBinary() {
+        return AWSSecretResponse.builder().name(SECRET_NAME_2).arn(ARN_2).createdDate(SECRET_DATE_2.toEpochMilli())
+                .encryptedSecretBinary(ENCRYPTED_SECRET_BINARY_2)
+                .versionStages(Arrays.asList(new String[]{LATEST_LABEL, SECRET_LABEL_2}))
+                .versionId(SECRET_VERSION_2).build();
+    }
+
+    @Test
+    void GIVEN_cloud_secret_WHEN_binary_secret_set_THEN_only_binary_returned() throws Exception {
+        when(mockAWSSecretClient.getSecret(any())).thenReturn(getMockSecretAWithSecretString()).thenReturn(getMockSecretBWithSecretBinary());
+        List<AWSSecretResponse> storedSecrets = new ArrayList<>();
+        storedSecrets.add(getMockDaoSecretAWithSecretString());
+        storedSecrets.add(getMockDaoSecretBWithSecretBinary());
+        when(mockDao.getAll()).thenReturn(SecretDocument.builder().secrets(storedSecrets).build());
+        SecretManager sm = new SecretManager(mockAWSSecretClient, crypter, mockDao);
+        sm.syncFromCloud(getMockSecrets());
+
+        GetSecretValueRequest request = GetSecretValueRequest.builder().secretId(SECRET_NAME_1).build();
+        GetSecretValueResult getSecretValueResult = sm.getSecret(request);
+
+        assertEquals(SECRET_VALUE_1, getSecretValueResult.getSecretString());
+        assertNull(getSecretValueResult.getSecretBinary());
+
+        request = GetSecretValueRequest.builder().secretId(SECRET_NAME_2).build();
+        getSecretValueResult = sm.getSecret(request);
+
+        assertNull(getSecretValueResult.getSecretString());
+        assertArrayEquals(SECRET_VALUE_BINARY_2, getSecretValueResult.getSecretBinary());
     }
 
     @Test
@@ -172,6 +241,7 @@ class SecretManagerTest {
         GetSecretValueResult getSecretValueResult = sm.getSecret(request);
 
         assertEquals(SECRET_VALUE_1, getSecretValueResult.getSecretString());
+        assertArrayEquals(SECRET_VALUE_BINARY_1, getSecretValueResult.getSecretBinary());
         assertEquals(ARN_1, getSecretValueResult.getSecretId());
         assertEquals(SECRET_VERSION_1, getSecretValueResult.getVersionId());
         assertEquals(2, getSecretValueResult.getVersionStages().size());
@@ -182,6 +252,7 @@ class SecretManagerTest {
         getSecretValueResult = sm.getSecret(request);
 
         assertEquals(SECRET_VALUE_2, getSecretValueResult.getSecretString());
+        assertArrayEquals(SECRET_VALUE_BINARY_2, getSecretValueResult.getSecretBinary());
         assertEquals(ARN_2, getSecretValueResult.getSecretId());
         assertEquals(SECRET_VERSION_2, getSecretValueResult.getVersionId());
         assertEquals(2, getSecretValueResult.getVersionStages().size());
@@ -193,6 +264,7 @@ class SecretManagerTest {
         getSecretValueResult = sm.getSecret(request);
 
         assertEquals(SECRET_VALUE_1, getSecretValueResult.getSecretString());
+        assertArrayEquals(SECRET_VALUE_BINARY_1, getSecretValueResult.getSecretBinary());
         assertEquals(ARN_1, getSecretValueResult.getSecretId());
         assertEquals(SECRET_VERSION_1, getSecretValueResult.getVersionId());
         assertEquals(2, getSecretValueResult.getVersionStages().size());
@@ -203,6 +275,7 @@ class SecretManagerTest {
         getSecretValueResult = sm.getSecret(request);
 
         assertEquals(SECRET_VALUE_2, getSecretValueResult.getSecretString());
+        assertArrayEquals(SECRET_VALUE_BINARY_2, getSecretValueResult.getSecretBinary());
         assertEquals(ARN_2, getSecretValueResult.getSecretId());
         assertEquals(SECRET_VERSION_2, getSecretValueResult.getVersionId());
         assertEquals(2, getSecretValueResult.getVersionStages().size());
@@ -214,6 +287,7 @@ class SecretManagerTest {
         getSecretValueResult = sm.getSecret(request);
 
         assertEquals(SECRET_VALUE_1, getSecretValueResult.getSecretString());
+        assertArrayEquals(SECRET_VALUE_BINARY_1, getSecretValueResult.getSecretBinary());
         assertEquals(ARN_1, getSecretValueResult.getSecretId());
         assertEquals(SECRET_VERSION_1, getSecretValueResult.getVersionId());
         assertEquals(2, getSecretValueResult.getVersionStages().size());
@@ -224,6 +298,7 @@ class SecretManagerTest {
         getSecretValueResult = sm.getSecret(request);
 
         assertEquals(SECRET_VALUE_2, getSecretValueResult.getSecretString());
+        assertArrayEquals(SECRET_VALUE_BINARY_2, getSecretValueResult.getSecretBinary());
         assertEquals(ARN_2, getSecretValueResult.getSecretId());
         assertEquals(SECRET_VERSION_2, getSecretValueResult.getVersionId());
         assertEquals(2, getSecretValueResult.getVersionStages().size());

@@ -1,5 +1,8 @@
 package com.aws.iot.greengrass.secretmanager;
 
+import com.aws.iot.evergreen.auth.AuthorizationHandler;
+import com.aws.iot.evergreen.auth.Permission;
+import com.aws.iot.evergreen.auth.exceptions.AuthorizationException;
 import com.aws.iot.evergreen.dependency.State;
 import com.aws.iot.evergreen.ipc.ConnectionContext;
 import com.aws.iot.evergreen.ipc.common.FrameReader;
@@ -23,6 +26,7 @@ import org.mockito.junit.jupiter.MockitoExtension;
 import java.io.IOException;
 import java.nio.file.Path;
 import java.util.Arrays;
+import java.util.HashSet;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.Future;
 import java.util.concurrent.TimeUnit;
@@ -31,9 +35,12 @@ import static com.aws.iot.evergreen.testcommons.testutilities.ExceptionLogProtec
 import static org.hamcrest.MatcherAssert.assertThat;
 import static org.hamcrest.Matchers.hasItem;
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.Mockito.atLeastOnce;
 import static org.mockito.Mockito.doThrow;
+import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 @ExtendWith({MockitoExtension.class, EGExtension.class})
@@ -53,6 +60,9 @@ public class SecretManagerServiceTest {
     @Mock
     SecretManager mockSecretManager;
 
+    @Mock
+    AuthorizationHandler mockAuthorizationHandler;
+
     void startKernelWithConfig(String configFile, State expectedState) throws InterruptedException {
         CountDownLatch secretManagerRunning = new CountDownLatch(1);
         kernel = new Kernel();
@@ -63,6 +73,7 @@ public class SecretManagerServiceTest {
             }
         });
         kernel.getContext().put(SecretManager.class, mockSecretManager);
+        kernel.getContext().put(AuthorizationHandler.class, mockAuthorizationHandler);
         kernel.launch();
         assertTrue(secretManagerRunning.await(10, TimeUnit.SECONDS));
     }
@@ -121,6 +132,8 @@ public class SecretManagerServiceTest {
                 .build();
 
         when(mockSecretManager.getSecret(any())).thenReturn(mockSecretResponse1);
+        when(mockContext.getServiceName()).thenReturn("mockService");
+        when(mockAuthorizationHandler.isAuthorized(any(), any(Permission.class))).thenReturn(true);
 
         FrameReader.Message inputMessage = getInputMessage();
         Future<FrameReader.Message> fut = kernel.getContext().get(SecretManagerService.class).handleMessage(inputMessage, mockContext);
@@ -132,6 +145,26 @@ public class SecretManagerServiceTest {
         assertThat(returnedResult.getVersionStages(), hasItem(CURRENT_LABEL));
         assertThat(returnedResult.getVersionStages(), hasItem(VERSION_LABEL));
         assertEquals(SecretResponseStatus.Success, returnedResult.getStatus());
+        verify(mockAuthorizationHandler, atLeastOnce()).registerComponent(SecretManagerService.SECRET_MANAGER_SERVICE_NAME,
+                new HashSet<>(Arrays.asList(SecretManagerService.SECRETS_AUTHORIZATION_OPCODE)));
+    }
+
+    @Test
+    void GIVEN_secret_service_WHEN_request_unauthorized_THEN_correct_response_returned(ExtensionContext context) throws Exception {
+        startKernelWithConfig("config.yaml", State.RUNNING);
+        ignoreExceptionOfType(context, AuthorizationException.class);
+        when(mockContext.getServiceName()).thenReturn("mockService");
+        when(mockAuthorizationHandler.isAuthorized(any(), any(Permission.class))).thenThrow(AuthorizationException.class);
+
+        FrameReader.Message inputMessage = getInputMessage();
+        Future<FrameReader.Message> fut = kernel.getContext().get(SecretManagerService.class).handleMessage(inputMessage, mockContext);
+        FrameReader.Message m = fut.get();
+        com.aws.iot.evergreen.ipc.services.secret.GetSecretValueResult returnedResult =
+                IPCUtil.decode(ApplicationMessage.fromBytes(m.getPayload()).getPayload(), GetSecretValueResult.class);
+        assertNull(returnedResult.getSecretId());
+        assertNull(returnedResult.getVersionId());
+        assertNull(returnedResult.getVersionStages());
+        assertEquals(SecretResponseStatus.Unauthorized, returnedResult.getStatus());
     }
 
     @Test
