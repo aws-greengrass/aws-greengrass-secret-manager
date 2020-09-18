@@ -1,18 +1,18 @@
 ---
-templateVersion: '2020-01-25'
-componentName: aws.greengrass.secret.manager
-description: AWS Greengrass Secret Manager
-publisher: AWS
-version: '0.0.0'
-manifests:
-  - platform:
+RecipeFormatVersion: '2020-01-25'
+ComponentName: aws.greengrass.SecretManager
+ComponentDescription: AWS Greengrass Secret Manager
+ComponentPublisher: AWS
+ComponentVersion: '0.0.0'
+Manifests:
+  - Platform:
       os: linux
-    parameters:
-      - name: cloudSecrets
-        value: '[]'
-        type: STRING
-      - name: accessControl
-        value: '[]'
-        type: STRING
-    artifacts:
-      - uri: s3://gg-dev-artifacts/$componentName/$platform.os/$version/aws.greengrass.secret.manager.jar
+    Parameters:
+      - Name: cloudSecrets
+        Value: '[]'
+        Type: STRING
+      - Name: accessControl
+        Value: '[]'
+        Type: STRING
+    Artifacts:
+      - URI: s3://gg-dev-artifacts/$componentName/$platform.os/$version/aws.greengrass.SecretManager.jar
