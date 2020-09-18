@@ -1,12 +1,13 @@
 #!/usr/bin/env python
 
-#  Copyright Amazon.com Inc. or its affiliates.
+#  Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
 #  SPDX-License-Identifier: Apache-2.0
 
+import os.path
+import re
 import sys
 import xml.etree.ElementTree as ET
-import re
-import os.path
+
 
 # branch-rate="0.0" complexity="0.0" line-rate="1.0"
 # branch="true" hits="1" number="86"
