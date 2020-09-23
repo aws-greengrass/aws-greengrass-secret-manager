@@ -25,6 +25,8 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.junit.jupiter.api.extension.ExtensionContext;
 import org.junit.jupiter.api.io.TempDir;
+import org.mockito.ArgumentCaptor;
+import org.mockito.Captor;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 
@@ -68,6 +70,12 @@ public class SecretManagerServiceTest {
     @Mock
     AuthorizationHandler mockAuthorizationHandler;
 
+    @Captor
+    ArgumentCaptor<String> stringCaptor;
+
+    @Captor
+    ArgumentCaptor<Permission> permissionCaptor;
+
     void startKernelWithConfig(String configFile, State expectedState) throws InterruptedException {
         CountDownLatch secretManagerRunning = new CountDownLatch(1);
         kernel = new Kernel();
@@ -90,7 +98,7 @@ public class SecretManagerServiceTest {
 
     private FrameReader.Message getInputMessage() throws IOException {
         com.aws.greengrass.ipc.services.secret.GetSecretValueRequest request =
-                com.aws.greengrass.ipc.services.secret.GetSecretValueRequest.builder().secretId("name1").build();
+                com.aws.greengrass.ipc.services.secret.GetSecretValueRequest.builder().secretId(SECRET_ID).build();
         ApplicationMessage msg = ApplicationMessage.builder().version(1)
                 .opCode(SecretClientOpCodes.GET_SECRET.ordinal())
                 .payload(IPCUtil.encode(request))
@@ -129,16 +137,19 @@ public class SecretManagerServiceTest {
     @Test
     void GIVEN_secret_service_WHEN_handler_called_THEN_correct_response_returned() throws Exception {
         startKernelWithConfig("config.yaml", State.RUNNING);
+        final String secretValue = "secretValue";
+        final String serviceName = "mockService";
         com.aws.greengrass.ipc.services.secret.GetSecretValueResult mockSecretResponse1 =
-                com.aws.greengrass.ipc.services.secret.GetSecretValueResult.builder().secretString("secret1")
+                com.aws.greengrass.ipc.services.secret.GetSecretValueResult.builder().secretString(secretValue)
                 .secretId(SECRET_ID)
                 .versionId(VERSION_ID)
                 .versionStages(Arrays.asList(new String[]{CURRENT_LABEL, VERSION_LABEL}))
                 .build();
 
+
         when(mockSecretManager.getSecret(any())).thenReturn(mockSecretResponse1);
         when(mockContext.getServiceName()).thenReturn("mockService");
-        when(mockAuthorizationHandler.isAuthorized(any(), any(Permission.class))).thenReturn(true);
+        when(mockAuthorizationHandler.isAuthorized(stringCaptor.capture(), permissionCaptor.capture())).thenReturn(true);
 
         FrameReader.Message inputMessage = getInputMessage();
         Future<FrameReader.Message> fut = kernel.getContext().get(SecretManagerService.class).handleMessage(inputMessage, mockContext);
@@ -150,6 +161,10 @@ public class SecretManagerServiceTest {
         assertThat(returnedResult.getVersionStages(), hasItem(CURRENT_LABEL));
         assertThat(returnedResult.getVersionStages(), hasItem(VERSION_LABEL));
         assertEquals(SecretResponseStatus.Success, returnedResult.getStatus());
+        assertEquals(SecretManagerService.SECRET_MANAGER_SERVICE_NAME, stringCaptor.getValue());
+        assertEquals(SecretManagerService.SECRETS_AUTHORIZATION_OPCODE, permissionCaptor.getValue().getOperation());
+        assertEquals(serviceName, permissionCaptor.getValue().getPrincipal());
+        assertEquals(SECRET_ID, permissionCaptor.getValue().getResource());
         verify(mockAuthorizationHandler, atLeastOnce()).registerComponent(SecretManagerService.SECRET_MANAGER_SERVICE_NAME,
                 new HashSet<>(Arrays.asList(SecretManagerService.SECRETS_AUTHORIZATION_OPCODE)));
     }

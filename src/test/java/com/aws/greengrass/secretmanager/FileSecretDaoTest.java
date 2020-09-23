@@ -7,6 +7,7 @@ package com.aws.greengrass.secretmanager;
 
 import com.aws.greengrass.config.Configuration;
 import com.aws.greengrass.config.Topic;
+import com.aws.greengrass.secretmanager.exception.NoSecretFoundException;
 import com.aws.greengrass.secretmanager.exception.SecretManagerException;
 import com.aws.greengrass.secretmanager.kernel.KernelClient;
 import com.aws.greengrass.secretmanager.model.AWSSecretResponse;
@@ -34,6 +35,7 @@ import static com.aws.greengrass.secretmanager.FileSecretDao.SECRET_RESPONSE_TOP
 import static org.hamcrest.MatcherAssert.assertThat;
 import static org.hamcrest.Matchers.hasItem;
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
@@ -154,4 +156,16 @@ class FileSecretDaoTest {
         assertThat(secondSecretFromDao.getVersionStages(), hasItem(LABEL3));
         assertThat(secondSecretFromDao.getVersionStages(), hasItem(LABEL4));
     }
+
+    @Test
+    void GIVEN_dao_store_WHEN_no_secret_saved_THEN_get_throws_exception() throws SecretManagerException, IOException {
+        FileSecretDao dao = new FileSecretDao(mockKernelClient);
+        Topic mockTopic = mock(Topic.class);
+        when(mockConfiguration.lookup(SERVICES_NAMESPACE_TOPIC,
+                SecretManagerService.SECRET_MANAGER_SERVICE_NAME, SECRET_RESPONSE_TOPIC)).thenReturn(mockTopic);
+        when(mockTopic.getOnce()).thenReturn(null);
+
+        assertThrows(NoSecretFoundException.class, () -> dao.getAll());
+    }
+
 }
