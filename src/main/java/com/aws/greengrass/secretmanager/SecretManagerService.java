@@ -146,7 +146,7 @@ public class SecretManagerService extends PluginService {
             secretManager.loadSecretsFromLocalStore();
         } catch (NoSecretFoundException e) {
             // Ignore. This means we started with empty configuration
-            logger.atDebug().setEventType("secret-manager-startup").event("No secrets configured").log();
+            logger.atDebug().setEventType("secret-manager-startup").log("No secrets configured");
         } catch (SecretManagerException e) {
             serviceErrored(e);
             return;
