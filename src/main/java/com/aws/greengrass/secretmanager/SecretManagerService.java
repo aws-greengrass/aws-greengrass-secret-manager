@@ -24,6 +24,7 @@ import com.aws.greengrass.ipc.services.secret.SecretClientOpCodes;
 import com.aws.greengrass.ipc.services.secret.SecretGenericResponse;
 import com.aws.greengrass.ipc.services.secret.SecretResponseStatus;
 import com.aws.greengrass.lifecyclemanager.PluginService;
+import com.aws.greengrass.secretmanager.exception.NoSecretFoundException;
 import com.aws.greengrass.secretmanager.exception.SecretManagerException;
 import com.aws.greengrass.secretmanager.kernel.KernelClient;
 import com.aws.greengrass.secretmanager.model.SecretConfiguration;
@@ -36,8 +37,10 @@ import com.fasterxml.jackson.dataformat.cbor.databind.CBORMapper;
 import java.io.IOException;
 import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
+import java.util.Map;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.Future;
 import javax.inject.Inject;
@@ -49,16 +52,22 @@ public class SecretManagerService extends PluginService {
 
     public static final String SECRET_MANAGER_SERVICE_NAME = "aws.greengrass.SecretManager";
     public static final String SECRETS_TOPIC = "cloudSecrets";
-    public static final String SECRETS_AUTHORIZATION_OPCODE = "getSecret";
+    public static final String SECRETS_AUTHORIZATION_OPCODE = "getsecret";
     private static final ObjectMapper CBOR_MAPPER = new CBORMapper();
     private static final ObjectMapper OBJECT_MAPPER =
             new ObjectMapper().configure(MapperFeature.ACCEPT_CASE_INSENSITIVE_PROPERTIES, true);
 
+    private static final Map<SecretClientOpCodes, String> sdkToAuthCode;
     private List<SecretConfiguration> configuredSecrets = new ArrayList<>();
     private final SecretManager secretManager;
     private final IPCRouter router;
     private final KernelClient kernelClient;
     private AuthorizationHandler authorizationHandler;
+
+    static {
+        sdkToAuthCode = new HashMap<>();
+        sdkToAuthCode.put(SecretClientOpCodes.GET_SECRET, SECRETS_AUTHORIZATION_OPCODE);
+    }
 
     /**
      * Constructor for SecretManagerService Service.
@@ -135,6 +144,9 @@ public class SecretManagerService extends PluginService {
         // we were not able to download any secrets due to network issues.
         try {
             secretManager.loadSecretsFromLocalStore();
+        } catch (NoSecretFoundException e) {
+            // Ignore. This means we started with empty configuration
+            logger.atDebug().setEventType("secret-manager-startup").event("No secrets configured").log();
         } catch (SecretManagerException e) {
             serviceErrored(e);
             return;
@@ -158,7 +170,7 @@ public class SecretManagerService extends PluginService {
                 case GET_SECRET:
                     GetSecretValueRequest request =
                             CBOR_MAPPER.readValue(applicationMessage.getPayload(), GetSecretValueRequest.class);
-                    doAuthorization(opCode.toString(), context.getServiceName(), request.getSecretId());
+                    doAuthorization(sdkToAuthCode.get(opCode), context.getServiceName(), request.getSecretId());
                     logger.atInfo().event("secret-access").kv("Principal", context.getServiceName())
                             .kv("secret", request.getSecretId()).log("requested secret");
                     response = secretManager.getSecret(request);
