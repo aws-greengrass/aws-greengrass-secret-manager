@@ -6,6 +6,7 @@
 package com.aws.greengrass.secretmanager;
 
 import com.aws.greengrass.config.Topic;
+import com.aws.greengrass.secretmanager.exception.NoSecretFoundException;
 import com.aws.greengrass.secretmanager.exception.SecretManagerException;
 import com.aws.greengrass.secretmanager.kernel.KernelClient;
 import com.aws.greengrass.secretmanager.model.SecretDocument;
@@ -49,7 +50,7 @@ public class FileSecretDao implements SecretDao<SecretDocument> {
         Topic secretResponseTopic = kernelClient.getConfig().lookup(SERVICES_NAMESPACE_TOPIC,
                     SecretManagerService.SECRET_MANAGER_SERVICE_NAME, SECRET_RESPONSE_TOPIC);
         if (secretResponseTopic.getOnce() == null) {
-            throw new SecretManagerException("No secrets found in file");
+            throw new NoSecretFoundException("No secrets found in file");
         }
         try {
             return OBJECT_MAPPER.readValue(Coerce.toString(secretResponseTopic), SecretDocument.class);
