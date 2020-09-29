@@ -26,8 +26,9 @@ import com.aws.greengrass.ipc.services.secret.SecretResponseStatus;
 import com.aws.greengrass.lifecyclemanager.PluginService;
 import com.aws.greengrass.secretmanager.exception.NoSecretFoundException;
 import com.aws.greengrass.secretmanager.exception.SecretManagerException;
-import com.aws.greengrass.secretmanager.kernel.KernelClient;
+import com.aws.greengrass.secretmanager.exception.v1.GetSecretException;
 import com.aws.greengrass.secretmanager.model.SecretConfiguration;
+import com.aws.greengrass.secretmanager.model.v1.GetSecretValueError;
 import com.aws.greengrass.util.Coerce;
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.MapperFeature;
@@ -35,9 +36,9 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.dataformat.cbor.databind.CBORMapper;
 
 import java.io.IOException;
-import java.util.ArrayList;
+import java.nio.charset.StandardCharsets;
 import java.util.Arrays;
-import java.util.HashMap;
+import java.util.EnumMap;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
@@ -58,14 +59,12 @@ public class SecretManagerService extends PluginService {
             new ObjectMapper().configure(MapperFeature.ACCEPT_CASE_INSENSITIVE_PROPERTIES, true);
 
     private static final Map<SecretClientOpCodes, String> sdkToAuthCode;
-    private List<SecretConfiguration> configuredSecrets = new ArrayList<>();
     private final SecretManager secretManager;
     private final IPCRouter router;
-    private final KernelClient kernelClient;
     private AuthorizationHandler authorizationHandler;
 
     static {
-        sdkToAuthCode = new HashMap<>();
+        sdkToAuthCode = new EnumMap<>(SecretClientOpCodes.class);
         sdkToAuthCode.put(SecretClientOpCodes.GET_SECRET, SECRETS_AUTHORIZATION_OPCODE);
     }
 
@@ -73,7 +72,6 @@ public class SecretManagerService extends PluginService {
      * Constructor for SecretManagerService Service.
      * @param topics                root Configuration topic for this service
      * @param router                router for registering the IPC callback
-     * @param kernelClient          Kernel client for accessing kernel state and methods
      * @param secretManager         secret manager which manages secrets
      * @param authorizationHandler  authorization handler
      */
@@ -81,12 +79,10 @@ public class SecretManagerService extends PluginService {
     public SecretManagerService(Topics topics,
                                 IPCRouter router,
                                 SecretManager secretManager,
-                                KernelClient kernelClient,
                                 AuthorizationHandler authorizationHandler) {
         super(topics);
         this.router = router;
         this.secretManager = secretManager;
-        this.kernelClient = kernelClient;
         this.authorizationHandler = authorizationHandler;
         // TODO: Subscribe on thing key updates
         topics.lookup(PARAMETERS_CONFIG_KEY, SECRETS_TOPIC)
@@ -94,14 +90,14 @@ public class SecretManagerService extends PluginService {
     }
 
     private void serviceChanged(WhatHappened whatHappened, Topic node) {
-        // TODO: reload secrets on deployment even if secrets dont change
         String val = Coerce.toString(node);
         if (val == null) {
             logger.atInfo().kv("service", SECRET_MANAGER_SERVICE_NAME).log("No secrets configured");
             return;
         }
         try {
-            configuredSecrets = OBJECT_MAPPER.readValue(val, new TypeReference<List<SecretConfiguration>>(){});
+            List<SecretConfiguration> configuredSecrets =
+                    OBJECT_MAPPER.readValue(val, new TypeReference<List<SecretConfiguration>>(){});
             secretManager.syncFromCloud(configuredSecrets);
         } catch (IOException e) {
             logger.atWarn().kv("node", SECRETS_TOPIC).kv("value", val).setCause(e)
@@ -152,6 +148,46 @@ public class SecretManagerService extends PluginService {
             return;
         }
         reportState(State.RUNNING);
+    }
+
+    /**
+     * Handles secret API calls from lambda-manager for v1 style lambdas.
+     * @param serviceName  Lambda component name requesting the secret.
+     * @param request      v1 style get secret request
+     * @return secret      v1 style secret response
+     */
+    public byte[] getSecret(String serviceName, byte[] request) {
+        int status;
+        String message = null;
+        try {
+            com.aws.greengrass.secretmanager.model.v1.GetSecretValueRequest getSecretValueRequest =
+                    CBOR_MAPPER.readValue(request,
+                            com.aws.greengrass.secretmanager.model.v1.GetSecretValueRequest.class);
+            // TODO: Add support for secret names
+            doAuthorization(SECRETS_AUTHORIZATION_OPCODE, serviceName, getSecretValueRequest.getSecretId());
+            logger.atInfo().event("secret-access").kv("Principal", serviceName)
+                    .kv("secret", getSecretValueRequest.getSecretId()).log("requested secret");
+            return CBOR_MAPPER.writeValueAsBytes(secretManager.getSecret(getSecretValueRequest));
+        } catch (GetSecretException t) {
+            status = t.getStatus();
+            message = t.getMessage();
+        } catch (AuthorizationException t) {
+            status = 403;
+            message = t.getMessage();
+        } catch (IOException t) {
+            status = 400;
+            message = "Unable to parse request";
+        } catch (Throwable t) {
+            status = 500;
+            message = t.getMessage();
+        }
+        try {
+            return CBOR_MAPPER.writeValueAsBytes(
+                    GetSecretValueError.builder().status(status).message(message).build());
+        } catch (IOException e) {
+            logger.atError("secret-error").setCause(e).log("Failed to send error response");
+        }
+        return "Internal Error".getBytes(StandardCharsets.UTF_8);
     }
 
     /**

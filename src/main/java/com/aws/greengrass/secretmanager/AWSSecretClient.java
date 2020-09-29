@@ -70,7 +70,7 @@ public class AWSSecretClient {
         }
     }
 
-    private void validateResponse(GetSecretValueResponse response) throws IllegalArgumentException {
+    private void validateResponse(GetSecretValueResponse response) {
         String errorStr = "Invalid secret response, %s is missing";
         if (Utils.isEmpty(response.versionId())) {
             throw new IllegalArgumentException(String.format(errorStr, "version Id"));
@@ -92,7 +92,7 @@ public class AWSSecretClient {
         }
     }
 
-    private void validateInput(GetSecretValueRequest request) throws IllegalArgumentException {
+    private void validateInput(GetSecretValueRequest request) {
         if (Utils.isEmpty(request.secretId())) {
             throw new IllegalArgumentException("invalid secret request, secret id is required");
         }
