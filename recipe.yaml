@@ -15,4 +15,4 @@ Manifests:
         Value: '[]'
         Type: STRING
     Artifacts:
-      - URI: s3://gg-dev-artifacts/$componentName/$platform.os/$version/aws.greengrass.SecretManager.jar
+      - URI: s3://gg-dev-artifacts-$stage/$componentName/$platform.os/$version/aws.greengrass.SecretManager.jar
