@@ -33,6 +33,7 @@ import org.mockito.junit.jupiter.MockitoExtension;
 import software.amazon.awssdk.core.SdkBytes;
 import software.amazon.awssdk.services.secretsmanager.model.GetSecretValueResponse;
 
+import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 import java.security.PrivateKey;
 import java.security.PublicKey;
@@ -355,6 +356,43 @@ class SecretManagerTest {
         verify(mockDao, times(1)).saveAll(documentArgumentCaptor.capture());
         // Now assert that one secret was persisted in the db
         assertEquals(1, documentArgumentCaptor.getValue().getSecrets().size());
+    }
+
+    @Test
+    void GIVEN_secret_manager_WHEN_network_error_and_changed_secret_THEN_throws() throws Exception {
+        when(mockDao.getAll()).thenReturn(mock(SecretDocument.class));
+        when(mockAWSSecretClient.getSecret(any())).thenReturn(getMockSecretA());
+        SecretManager sm = new SecretManager(mockAWSSecretClient, mockKernelClient, mockDao);
+        SecretConfiguration secret1 = SecretConfiguration.builder().arn(ARN_1).build();
+        SecretConfiguration secret2 = SecretConfiguration.builder().arn(ARN_2).build();
+        List<SecretConfiguration> configuredSecret1 = new ArrayList() {{
+            add(secret1);
+        }};
+        List<SecretConfiguration> configuredSecret2 = new ArrayList() {{
+            add(secret2);
+        }};
+        sm.syncFromCloud(configuredSecret1);
+        verify(mockAWSSecretClient, times(1)).getSecret(awsClientRequestCaptor.capture());
+
+        when(mockAWSSecretClient.getSecret(any())).thenThrow(IOException.class);
+        assertThrows(SecretManagerException.class, () -> sm.syncFromCloud(configuredSecret2));
+    }
+
+    @Test
+    void GIVEN_secret_manager_WHEN_network_error_and_same_secret_THEN_not_throw() throws Exception {
+        when(mockDao.getAll()).thenReturn(mock(SecretDocument.class));
+        when(mockAWSSecretClient.getSecret(any())).thenReturn(getMockSecretA());
+        SecretManager sm = new SecretManager(mockAWSSecretClient, mockKernelClient, mockDao);
+        SecretConfiguration secret1 = SecretConfiguration.builder().arn(ARN_1).build();
+        SecretConfiguration secret2 = SecretConfiguration.builder().arn(ARN_2).build();
+        List<SecretConfiguration> configuredSecret1 = new ArrayList() {{
+            add(secret1);
+        }};
+        sm.syncFromCloud(configuredSecret1);
+        verify(mockAWSSecretClient, times(1)).getSecret(awsClientRequestCaptor.capture());
+
+        when(mockAWSSecretClient.getSecret(any())).thenThrow(IOException.class);
+        sm.syncFromCloud(configuredSecret1);
     }
 
     @Test

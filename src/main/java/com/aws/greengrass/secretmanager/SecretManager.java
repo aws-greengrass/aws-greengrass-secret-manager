@@ -24,6 +24,7 @@ import software.amazon.awssdk.core.SdkBytes;
 import software.amazon.awssdk.services.secretsmanager.model.GetSecretValueRequest;
 import software.amazon.awssdk.services.secretsmanager.model.GetSecretValueResponse;
 
+import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 import java.security.PrivateKey;
 import java.security.PublicKey;
@@ -34,8 +35,11 @@ import java.util.HashSet;
 import java.util.List;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.regex.Pattern;
 import javax.inject.Inject;
+
+import static java.util.stream.Collectors.toList;
 
 /**
  * Class which holds the business logic for secret management. This class always holds a copy of
@@ -52,6 +56,7 @@ public class SecretManager {
     // Cache which holds aws secrets result
     private ConcurrentHashMap<String, GetSecretValueResponse> cache = new ConcurrentHashMap<>();
     private ConcurrentHashMap<String, String> nametoArnMap = new ConcurrentHashMap<>();
+    private CopyOnWriteArrayList<String> previousConfiguredSecrets;
 
     private final AWSSecretClient secretClient;
     private final SecretDao<SecretDocument> secretDao;
@@ -144,8 +149,21 @@ public class SecretManager {
                             .versionStages(result.versionStages())
                             .build();
                     downloadedSecrets.add(encryptedResult);
+                } catch (IOException e) {
+                    String actualLabel = "";
+                    if (!Utils.isEmpty(secretConfig.getLabels())) {
+                        actualLabel = label;
+                    }
+                    if (previousConfiguredSecrets != null && previousConfiguredSecrets
+                            .contains(secretArn + actualLabel)) {
+                        logger.atDebug().kv("secret", secretArn).kv("label", label)
+                                .log("Secret configuration is not changed");
+                        logger.atWarn().kv("secret", secretArn).log("Could not sync secret");
+                    } else {
+                        throw new SecretManagerException("Failed to sync secret", e);
+                    }
                 } catch (Throwable e) {
-                    logger.atWarn().kv("Secret ", secretArn).log("Could not fetch secret from cloud", e);
+                    logger.atWarn().kv("secret", secretArn).log("Could not fetch secret from cloud", e);
                     continue;
                 }
             }
@@ -153,6 +171,15 @@ public class SecretManager {
         secretDao.saveAll(SecretDocument.builder().secrets(downloadedSecrets).build());
         // Once the secrets are finished downloading, load it locally
         loadSecretsFromLocalStore();
+        setPreviousConfiguredSecrets(configuredSecrets);
+    }
+
+    private void setPreviousConfiguredSecrets(List<SecretConfiguration> configuredSecrets) {
+        if (previousConfiguredSecrets == null) {
+            previousConfiguredSecrets = new CopyOnWriteArrayList<>();
+        }
+        previousConfiguredSecrets.clear();
+        configuredSecrets.forEach((s) -> previousConfiguredSecrets.addAllAbsent(s.getArnLabelList()));
     }
 
     /**

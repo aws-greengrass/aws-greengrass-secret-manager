@@ -94,7 +94,6 @@ public class SecretManagerService extends PluginService {
     }
 
     private void serviceChanged(WhatHappened whatHappened, Topic node) {
-        // TODO: reload secrets on deployment even if secrets dont change
         String val = Coerce.toString(node);
         if (val == null) {
             logger.atInfo().kv("service", SECRET_MANAGER_SERVICE_NAME).log("No secrets configured");
@@ -109,6 +108,7 @@ public class SecretManagerService extends PluginService {
         } catch (SecretManagerException e) {
             logger.atWarn().kv("service", SECRET_MANAGER_SERVICE_NAME).setCause(e)
                     .log("Unable to download secrets from cloud");
+            serviceErrored(e);
         }
     }
 
