@@ -20,6 +20,20 @@
             <url>https://d10d248laylpoq.cloudfront.net</url>
         </repository>
     </repositories>
+    <pluginRepositories>
+        <pluginRepository>
+            <id>maven-snapshots</id>
+            <name>Maven snapshots</name>
+            <layout>default</layout>
+            <url>https://repository.apache.org/content/repositories/snapshots/</url>
+        </pluginRepository>
+        <pluginRepository>
+            <id>yle-public</id>
+            <name>Yle public repository</name>
+            <url>https://d2x444wtt5plvm.cloudfront.net/release</url>
+            <layout>default</layout>
+        </pluginRepository>
+    </pluginRepositories>
     <dependencyManagement>
         <dependencies>
             <dependency>
@@ -32,6 +46,13 @@
         </dependencies>
     </dependencyManagement>
     <build>
+        <extensions>
+            <extension>
+                <groupId>fi.yle.tools</groupId>
+                <artifactId>aws-maven</artifactId>
+                <version>1.4.2</version>
+            </extension>
+        </extensions>
         <plugins>
             <plugin>
                 <groupId>org.jacoco</groupId>
