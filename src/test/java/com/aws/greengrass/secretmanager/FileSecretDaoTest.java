@@ -13,6 +13,7 @@ import com.aws.greengrass.secretmanager.kernel.KernelClient;
 import com.aws.greengrass.secretmanager.model.AWSSecretResponse;
 import com.aws.greengrass.secretmanager.model.SecretDocument;
 import com.aws.greengrass.testcommons.testutilities.GGExtension;
+import com.aws.greengrass.util.Coerce;
 import com.fasterxml.jackson.databind.MapperFeature;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.junit.jupiter.api.BeforeEach;
@@ -37,6 +38,7 @@ import static org.hamcrest.Matchers.hasItem;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
+import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
@@ -188,7 +190,7 @@ class FileSecretDaoTest {
     }
 
     @Test
-    void GIVEN_dao_store_WHEN_no_secret_saved_THEN_get_throws_exception() throws SecretManagerException, IOException {
+    void GIVEN_dao_store_WHEN_no_secret_saved_THEN_get_throws_exception() throws SecretManagerException {
         FileSecretDao dao = new FileSecretDao(mockKernelClient);
         Topic mockTopic = mock(Topic.class);
         when(mockConfiguration.lookup(SERVICES_NAMESPACE_TOPIC,
@@ -199,4 +201,22 @@ class FileSecretDaoTest {
         assertThrows(NoSecretFoundException.class, () -> dao.get(ARN_1, LABEL1));
     }
 
+    @Test
+    void GIVEN_dao_store_WHEN_objectmapper_error_THEN_throws() throws SecretManagerException {
+        FileSecretDao dao = new FileSecretDao(mockKernelClient);
+        Topic mockTopic = mock(Topic.class);
+        when(mockConfiguration.lookup(SERVICES_NAMESPACE_TOPIC, SecretManagerService.SECRET_MANAGER_SERVICE_NAME,
+                SECRET_RESPONSE_TOPIC)).thenReturn(mockTopic);
+        // Make readValue() throw JsonProcessingException
+        when(Coerce.toString(mockTopic)).thenReturn(mockTopic.getClass().getName());
+        assertThrows(SecretManagerException.class, () -> dao.getAll());
+
+        List<AWSSecretResponse> response = getSecrets();
+        SecretDocument doc = new SecretDocument(response);
+        // Make withValue() throw IOException
+        when(mockTopic.withValue(anyString())).thenAnswer(invocation -> {
+            throw new IOException();
+        });
+        assertThrows(SecretManagerException.class, () -> dao.saveAll(doc));
+    }
 }
