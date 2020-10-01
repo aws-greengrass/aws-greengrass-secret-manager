@@ -38,11 +38,8 @@ import java.util.HashSet;
 import java.util.List;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
-import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.regex.Pattern;
 import javax.inject.Inject;
-
-import static java.util.stream.Collectors.toList;
 
 /**
  * Class which holds the business logic for secret management. This class always holds a copy of
@@ -59,10 +56,9 @@ public class SecretManager {
     // Cache which holds aws secrets result
     private ConcurrentHashMap<String, GetSecretValueResponse> cache = new ConcurrentHashMap<>();
     private ConcurrentHashMap<String, String> nametoArnMap = new ConcurrentHashMap<>();
-    private CopyOnWriteArrayList<String> previousConfiguredSecrets;
 
     private final AWSSecretClient secretClient;
-    private final SecretDao<SecretDocument> secretDao;
+    private final SecretDao<SecretDocument, AWSSecretResponse> secretDao;
     private final Crypter crypter;
 
     /**
@@ -128,40 +124,29 @@ public class SecretManager {
                     AWSSecretResponse encryptedResult = fetchAndEncryptAWSResponse(request);
                     downloadedSecrets.add(encryptedResult);
                 } catch (IOException e) {
-                    String actualLabel = "";
-                    if (!Utils.isEmpty(secretConfig.getLabels())) {
-                        actualLabel = label;
-                    }
-                    if (previousConfiguredSecrets != null && previousConfiguredSecrets
-                            .contains(secretArn + actualLabel)) {
+                    AWSSecretResponse secretFromDao = secretDao.get(secretArn, label);
+                    if (secretFromDao != null) {
+                        downloadedSecrets.add(secretFromDao);
                         logger.atDebug().kv("secret", secretArn).kv("label", label)
-                                .log("Secret configuration is not changed");
-                        logger.atWarn().kv("secret", secretArn).log("Could not sync secret");
+                                .log("Secret configuration is not changed. Loaded from local store");
+                        logger.atWarn().kv("secret", secretArn).kv("label", label)
+                                .log(String.format("Could not sync secret %s, label %s", secretArn, label));
                     } else {
-                        throw new SecretManagerException("Failed to sync secret", e);
+                        throw new SecretManagerException(
+                                String.format("Failed to sync secret %s, label %s", secretArn, label), e);
                     }
-                } catch (Throwable e) {
-                    logger.atWarn().kv("secret", secretArn).log("Could not fetch secret from cloud", e);
-                    continue;
+                } catch (Exception e) {
+                    throw new SecretManagerException(e);
                 }
             }
         }
         secretDao.saveAll(SecretDocument.builder().secrets(downloadedSecrets).build());
         // Once the secrets are finished downloading, load it locally
         loadSecretsFromLocalStore();
-        setPreviousConfiguredSecrets(configuredSecrets);
-    }
-
-    private void setPreviousConfiguredSecrets(List<SecretConfiguration> configuredSecrets) {
-        if (previousConfiguredSecrets == null) {
-            previousConfiguredSecrets = new CopyOnWriteArrayList<>();
-        }
-        previousConfiguredSecrets.clear();
-        configuredSecrets.forEach((s) -> previousConfiguredSecrets.addAllAbsent(s.getArnLabelList()));
     }
 
     private AWSSecretResponse fetchAndEncryptAWSResponse(GetSecretValueRequest request)
-            throws SecretCryptoException, SecretManagerException {
+            throws SecretCryptoException, SecretManagerException, IOException {
         GetSecretValueResponse result = secretClient.getSecret(request);
         // Save the secrets to local store for offline access
         String encodedSecretString = null;

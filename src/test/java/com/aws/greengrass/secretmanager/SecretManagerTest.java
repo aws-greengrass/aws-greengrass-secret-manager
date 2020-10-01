@@ -54,10 +54,8 @@ import static org.junit.jupiter.api.Assertions.assertArrayEquals;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
-import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyString;
-import static org.mockito.ArgumentMatchers.contains;
 import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.lenient;
 import static org.mockito.Mockito.mock;
@@ -444,59 +442,97 @@ class SecretManagerTest {
         when(mockDao.getAll()).thenReturn(mock(SecretDocument.class));
         when(mockAWSSecretClient.getSecret(any())).thenThrow(SecretManagerException.class);
         SecretManager sm = new SecretManager(mockAWSSecretClient, mockKernelClient, mockDao);
-        sm.syncFromCloud(getMockSecrets());
+        // Secrets should not be loaded as the secret fails and should throw SecretManagerException
+        assertThrows(SecretManagerException.class, () -> sm.syncFromCloud(getMockSecrets()));
+        verify(mockAWSSecretClient, times(1)).getSecret(awsClientRequestCaptor.capture());
+        verify(mockDao, times(0)).saveAll(documentArgumentCaptor.capture());
+
+        // Now, update the aws client to return a result and then throw SecretManagerException for second secret
+        // Secrets should not be loaded as one secret fails and should throw SecretManagerException
+        reset(mockAWSSecretClient);
+        reset(mockDao);
+        when(mockAWSSecretClient.getSecret(any())).thenReturn(getMockSecretA()).thenThrow(SecretManagerException.class);
+        assertThrows(SecretManagerException.class, () -> sm.syncFromCloud(getMockSecrets()));
+        verify(mockAWSSecretClient, times(2)).getSecret(awsClientRequestCaptor.capture());
+        verify(mockDao, times(0)).saveAll(documentArgumentCaptor.capture());
+
+        // Now, update the aws client to return a result and then throw IOException for second secret
+        // Secrets should not be loaded as one secret fails and should throw SecretManagerException
+        reset(mockAWSSecretClient);
+        reset(mockDao);
+        when(mockAWSSecretClient.getSecret(any())).thenReturn(getMockSecretA()).thenThrow(IOException.class);
+        assertThrows(SecretManagerException.class, () -> sm.syncFromCloud(getMockSecrets()));
+        verify(mockAWSSecretClient, times(2)).getSecret(awsClientRequestCaptor.capture());
+        verify(mockDao, times(0)).saveAll(documentArgumentCaptor.capture());
+    }
+
+    @Test
+    void GIVEN_secret_manager_WHEN_network_error_and_new_secret_THEN_throws() throws Exception {
+        SecretManager sm = new SecretManager(mockAWSSecretClient, mockKernelClient, mockDao);
+        SecretConfiguration secret1 = SecretConfiguration.builder().arn(ARN_1).build();
+        List<SecretConfiguration> configuredSecret1 = Collections.singletonList(secret1);
+
+        when(mockAWSSecretClient.getSecret(any())).thenThrow(IOException.class);
+        assertThrows(SecretManagerException.class, () -> sm.syncFromCloud(configuredSecret1));
+    }
+
+    @Test
+    void GIVEN_secret_manager_WHEN_network_error_and_existing_secret_THEN_not_throw() throws Exception {
+        when(mockDao.getAll()).thenReturn(mock(SecretDocument.class));
+        SecretManager sm = new SecretManager(mockAWSSecretClient, mockKernelClient, mockDao);
+        SecretConfiguration secret1 = SecretConfiguration.builder().arn(ARN_1).build();
+        List<SecretConfiguration> configuredSecret1 = Collections.singletonList(secret1);
+
+        // Secret is in Dao, IOException is ignored and secret is loaded from local
+        when(mockDao.get(ARN_1, LATEST_LABEL)).thenReturn(getMockDaoSecretA());
+        when(mockAWSSecretClient.getSecret(any())).thenThrow(IOException.class);
+        sm.syncFromCloud(configuredSecret1);
         verify(mockDao, times(1)).saveAll(documentArgumentCaptor.capture());
+    }
 
-        // assert that we did not persist any secrets to the store
-        assertTrue(documentArgumentCaptor.getValue().getSecrets().isEmpty());
+    @Test
+    void GIVEN_secret_manager_WHEN_some_label_error_THEN_throws_for_non_network_error() throws Exception {
+        when(mockDao.getAll()).thenReturn(mock(SecretDocument.class));
+        SecretManager sm = new SecretManager(mockAWSSecretClient, mockKernelClient, mockDao);
+        SecretConfiguration secret =
+                SecretConfiguration.builder().arn(ARN_2).labels(Arrays.asList(LATEST_LABEL, SECRET_LABEL_1)).build();
+        List<SecretConfiguration> configuredSecret = Collections.singletonList(secret);
 
-        // Now, update the aws client to return a result and then throw for second secret
+        // two labels both throw IOException
+        // Given only the first one label is in Dao, IOException is ignored and SecretManagerException is thrown
+        when(mockDao.get(ARN_2, LATEST_LABEL)).thenReturn(getMockDaoSecretB());
+        when(mockDao.get(ARN_2, SECRET_LABEL_1)).thenReturn(null);
+        when(mockAWSSecretClient.getSecret(any())).thenThrow(IOException.class).thenThrow(IOException.class);
+        assertThrows(SecretManagerException.class, () -> sm.syncFromCloud(configuredSecret));
+
         reset(mockAWSSecretClient);
         reset(mockDao);
         when(mockDao.getAll()).thenReturn(mock(SecretDocument.class));
-        when(mockAWSSecretClient.getSecret(any())).thenReturn(getMockSecretA()).thenThrow(SecretManagerException.class);
+        // two labels throw IOException and SecretManagerException respectively.
+        // Given both labels are in Dao, IOException is ignored and SecretManagerException is thrown
+        when(mockDao.get(ARN_2, LATEST_LABEL)).thenReturn(getMockDaoSecretB());
+        when(mockDao.get(ARN_2, SECRET_LABEL_1)).thenReturn(getMockDaoSecretB());
+        when(mockAWSSecretClient.getSecret(any())).thenThrow(IOException.class).thenThrow(SecretManagerException.class);
+        assertThrows(SecretManagerException.class, () -> sm.syncFromCloud(configuredSecret));
 
-        sm.syncFromCloud(getMockSecrets());
+        reset(mockAWSSecretClient);
+        reset(mockDao);
+        when(mockDao.getAll()).thenReturn(mock(SecretDocument.class));
+        // one label succeeds and the other throws IOException and SecretManagerException respectively.
+        // Given both labels are in Dao, IOException is ignored and SecretManagerException is thrown
+        when(mockDao.get(ARN_2, LATEST_LABEL)).thenReturn(getMockDaoSecretB());
+        when(mockAWSSecretClient.getSecret(any())).thenReturn(getMockSecretB()).thenThrow(SecretManagerException.class);
+        assertThrows(SecretManagerException.class, () -> sm.syncFromCloud(configuredSecret));
+
+        reset(mockAWSSecretClient);
+        reset(mockDao);
+        when(mockDao.getAll()).thenReturn(mock(SecretDocument.class));
+        // one label succeeds and the other throws IOException and SecretManagerException respectively.
+        // Given both labels are in Dao, IOException is ignored and secret is loaded from local
+        when(mockDao.get(ARN_2, LATEST_LABEL)).thenReturn(getMockDaoSecretB());
+        when(mockAWSSecretClient.getSecret(any())).thenReturn(getMockSecretB()).thenThrow(IOException.class);
+        sm.syncFromCloud(configuredSecret);
         verify(mockDao, times(1)).saveAll(documentArgumentCaptor.capture());
-        // Now assert that one secret was persisted in the db
-        assertEquals(1, documentArgumentCaptor.getValue().getSecrets().size());
-    }
-
-    @Test
-    void GIVEN_secret_manager_WHEN_network_error_and_changed_secret_THEN_throws() throws Exception {
-        when(mockDao.getAll()).thenReturn(mock(SecretDocument.class));
-        when(mockAWSSecretClient.getSecret(any())).thenReturn(getMockSecretA());
-        SecretManager sm = new SecretManager(mockAWSSecretClient, mockKernelClient, mockDao);
-        SecretConfiguration secret1 = SecretConfiguration.builder().arn(ARN_1).build();
-        SecretConfiguration secret2 = SecretConfiguration.builder().arn(ARN_2).build();
-        List<SecretConfiguration> configuredSecret1 = new ArrayList() {{
-            add(secret1);
-        }};
-        List<SecretConfiguration> configuredSecret2 = new ArrayList() {{
-            add(secret2);
-        }};
-        sm.syncFromCloud(configuredSecret1);
-        verify(mockAWSSecretClient, times(1)).getSecret(awsClientRequestCaptor.capture());
-
-        when(mockAWSSecretClient.getSecret(any())).thenThrow(IOException.class);
-        assertThrows(SecretManagerException.class, () -> sm.syncFromCloud(configuredSecret2));
-    }
-
-    @Test
-    void GIVEN_secret_manager_WHEN_network_error_and_same_secret_THEN_not_throw() throws Exception {
-        when(mockDao.getAll()).thenReturn(mock(SecretDocument.class));
-        when(mockAWSSecretClient.getSecret(any())).thenReturn(getMockSecretA());
-        SecretManager sm = new SecretManager(mockAWSSecretClient, mockKernelClient, mockDao);
-        SecretConfiguration secret1 = SecretConfiguration.builder().arn(ARN_1).build();
-        SecretConfiguration secret2 = SecretConfiguration.builder().arn(ARN_2).build();
-        List<SecretConfiguration> configuredSecret1 = new ArrayList() {{
-            add(secret1);
-        }};
-        sm.syncFromCloud(configuredSecret1);
-        verify(mockAWSSecretClient, times(1)).getSecret(awsClientRequestCaptor.capture());
-
-        when(mockAWSSecretClient.getSecret(any())).thenThrow(IOException.class);
-        sm.syncFromCloud(configuredSecret1);
     }
 
     @Test

@@ -9,6 +9,7 @@ import com.aws.greengrass.config.Topic;
 import com.aws.greengrass.secretmanager.exception.NoSecretFoundException;
 import com.aws.greengrass.secretmanager.exception.SecretManagerException;
 import com.aws.greengrass.secretmanager.kernel.KernelClient;
+import com.aws.greengrass.secretmanager.model.AWSSecretResponse;
 import com.aws.greengrass.secretmanager.model.SecretDocument;
 import com.aws.greengrass.util.Coerce;
 import com.fasterxml.jackson.databind.MapperFeature;
@@ -25,7 +26,7 @@ import static com.aws.greengrass.lifecyclemanager.GreengrassService.SERVICES_NAM
  * only a single thread can either read or write the store at any point of time. The class
  * is also immutable with all fields being final.
  */
-public class FileSecretDao implements SecretDao<SecretDocument> {
+public class FileSecretDao implements SecretDao<SecretDocument, AWSSecretResponse> {
     public static final String SECRET_RESPONSE_TOPIC = "secretResponse";
     private final KernelClient kernelClient;
     private static final ObjectMapper OBJECT_MAPPER =
@@ -57,6 +58,23 @@ public class FileSecretDao implements SecretDao<SecretDocument> {
         } catch (IOException e) {
             throw new SecretManagerException("Cannot read secret response from store", e);
         }
+    }
+
+    /**
+     * Retrieve a certain secret from underlying file store.
+     * @param secretArn arn of the secret
+     * @param label label of the secret
+     * @return {@link AWSSecretResponse} the secret given the arn and label, null if not present
+     * @throws SecretManagerException when there is any issue reading the store.
+     */
+    public synchronized AWSSecretResponse get(String secretArn, String label) throws SecretManagerException {
+        SecretDocument secrets = getAll();
+        for (AWSSecretResponse secretResponse : secrets.getSecrets()) {
+            if (secretArn.equals(secretResponse.getArn()) && secretResponse.getVersionStages().contains(label)) {
+                return secretResponse;
+            }
+        }
+        return null;
     }
 
     /**

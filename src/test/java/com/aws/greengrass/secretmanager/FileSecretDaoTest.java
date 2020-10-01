@@ -35,6 +35,7 @@ import static com.aws.greengrass.secretmanager.FileSecretDao.SECRET_RESPONSE_TOP
 import static org.hamcrest.MatcherAssert.assertThat;
 import static org.hamcrest.Matchers.hasItem;
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.times;
@@ -155,6 +156,35 @@ class FileSecretDaoTest {
         assertEquals(DATE_2, secondSecretFromDao.getCreatedDate());
         assertThat(secondSecretFromDao.getVersionStages(), hasItem(LABEL3));
         assertThat(secondSecretFromDao.getVersionStages(), hasItem(LABEL4));
+
+        // Validate get with arn and label
+        AWSSecretResponse secretFromDaoArn1Label1 = dao.get(ARN_1, LABEL1);
+        AWSSecretResponse secretFromDaoArn1Label2 = dao.get(ARN_1, LABEL2);
+        assertEquals(secretFromDaoArn1Label1,secretFromDaoArn1Label2);
+        assertEquals(SECRET_NAME_1, secretFromDaoArn1Label1.getName());
+        assertEquals(SECRET_STRING_1, secretFromDaoArn1Label1.getEncryptedSecretString());
+        assertEquals(ARN_1, secretFromDaoArn1Label1.getArn());
+        assertEquals(VERSION_ID_1, secretFromDaoArn1Label1.getVersionId());
+        assertEquals(DATE_1, secretFromDaoArn1Label1.getCreatedDate());
+        assertThat(secretFromDaoArn1Label1.getVersionStages(), hasItem(LABEL1));
+        assertThat(secretFromDaoArn1Label1.getVersionStages(), hasItem(LABEL2));
+
+        AWSSecretResponse secretFromDaoArn2Label3 = dao.get(ARN_2, LABEL3);
+        AWSSecretResponse secretFromDaoArn2Label4 = dao.get(ARN_2, LABEL4);
+        assertEquals(secretFromDaoArn2Label3,secretFromDaoArn2Label4);
+        assertEquals(SECRET_NAME_2, secretFromDaoArn2Label3.getName());
+        assertEquals(SECRET_STRING_2, secretFromDaoArn2Label3.getEncryptedSecretString());
+        assertEquals(ARN_2, secretFromDaoArn2Label3.getArn());
+        assertEquals(VERSION_ID_2, secretFromDaoArn2Label3.getVersionId());
+        assertEquals(DATE_2, secretFromDaoArn2Label3.getCreatedDate());
+        assertThat(secretFromDaoArn2Label3.getVersionStages(), hasItem(LABEL3));
+        assertThat(secretFromDaoArn2Label3.getVersionStages(), hasItem(LABEL4));
+
+        AWSSecretResponse secretNotFromDao1 = dao.get("invalidArn", LABEL1);
+        assertNull(secretNotFromDao1);
+
+        AWSSecretResponse secretNotFromDao2 = dao.get(ARN_1, "invalidLabel");
+        assertNull(secretNotFromDao2);
     }
 
     @Test
@@ -166,6 +196,7 @@ class FileSecretDaoTest {
         when(mockTopic.getOnce()).thenReturn(null);
 
         assertThrows(NoSecretFoundException.class, () -> dao.getAll());
+        assertThrows(NoSecretFoundException.class, () -> dao.get(ARN_1, LABEL1));
     }
 
 }
