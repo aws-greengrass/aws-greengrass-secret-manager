@@ -31,11 +31,6 @@ public class KernelClient {
         return Coerce.toString(deviceConfiguration.getCertificateFilePath());
     }
 
-    public boolean isAuthorized() {
-        // TODO: integrate with authorization service
-        return true;
-    }
-
     public Configuration getConfig() {
         return kernel.getConfig();
     }

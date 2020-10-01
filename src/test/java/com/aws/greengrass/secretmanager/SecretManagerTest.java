@@ -34,17 +34,22 @@ import software.amazon.awssdk.core.SdkBytes;
 import software.amazon.awssdk.services.secretsmanager.model.GetSecretValueResponse;
 
 import java.io.IOException;
+import java.nio.ByteBuffer;
 import java.nio.charset.StandardCharsets;
 import java.security.PrivateKey;
 import java.security.PublicKey;
+import java.sql.Date;
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Base64;
+import java.util.Collections;
 import java.util.List;
 import java.util.UUID;
 
 import static com.aws.greengrass.testcommons.testutilities.ExceptionLogProtector.ignoreExceptionOfType;
+import static org.hamcrest.MatcherAssert.assertThat;
+import static org.hamcrest.Matchers.hasItem;
 import static org.junit.jupiter.api.Assertions.assertArrayEquals;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNull;
@@ -52,6 +57,7 @@ import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.ArgumentMatchers.contains;
 import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.lenient;
 import static org.mockito.Mockito.mock;
@@ -308,6 +314,104 @@ class SecretManagerTest {
         assertEquals(2, getSecretValueResult.getVersionStages().size());
         assertEquals(LATEST_LABEL, getSecretValueResult.getVersionStages().get(0));
         assertEquals(SECRET_LABEL_2, getSecretValueResult.getVersionStages().get(1));
+    }
+
+    @Test
+    void GIVEN_secret_manager_WHEN_sync_from_cloud_THEN_v1_secret_api_works() throws Exception {
+        when(mockAWSSecretClient.getSecret(any())).thenReturn(getMockSecretA()).thenReturn(getMockSecretB());
+        List<AWSSecretResponse> storedSecrets = new ArrayList<>();
+        storedSecrets.add(getMockDaoSecretA());
+        storedSecrets.add(getMockDaoSecretB());
+        when(mockDao.getAll()).thenReturn(SecretDocument.builder().secrets(storedSecrets).build());
+        SecretManager sm = new SecretManager(mockAWSSecretClient, crypter, mockDao);
+        sm.syncFromCloud(getMockSecrets());
+
+        com.aws.greengrass.secretmanager.model.v1.GetSecretValueRequest request =
+                com.aws.greengrass.secretmanager.model.v1.GetSecretValueRequest
+                        .builder().secretId(SECRET_NAME_1).build();
+        com.aws.greengrass.secretmanager.model.v1.GetSecretValueResult getSecretValueResult = sm.getSecret(request);
+
+        assertEquals(SECRET_VALUE_1, getSecretValueResult.getSecretString());
+        assertEquals(ByteBuffer.wrap(SECRET_VALUE_BINARY_1), getSecretValueResult.getSecretBinary());
+        assertEquals(Date.from(SECRET_DATE_1), getSecretValueResult.getCreatedDate());
+        assertEquals(SECRET_NAME_1, getSecretValueResult.getName());
+        assertEquals(ARN_1, getSecretValueResult.getArn());
+        assertEquals(SECRET_VERSION_1, getSecretValueResult.getVersionId());
+        assertEquals(2, getSecretValueResult.getVersionStages().size());
+        assertThat(getSecretValueResult.getVersionStages(), hasItem(LATEST_LABEL));
+        assertThat(getSecretValueResult.getVersionStages(), hasItem(SECRET_LABEL_1));
+
+        request = com.aws.greengrass.secretmanager.model.v1.GetSecretValueRequest
+                .builder().secretId(SECRET_NAME_2).build();
+        getSecretValueResult = sm.getSecret(request);
+
+        assertEquals(SECRET_VALUE_2, getSecretValueResult.getSecretString());
+        assertEquals(ByteBuffer.wrap(SECRET_VALUE_BINARY_2), getSecretValueResult.getSecretBinary());
+        assertEquals(Date.from(SECRET_DATE_2), getSecretValueResult.getCreatedDate());
+        assertEquals(SECRET_NAME_2, getSecretValueResult.getName());
+        assertEquals(ARN_2, getSecretValueResult.getArn());
+        assertEquals(SECRET_VERSION_2, getSecretValueResult.getVersionId());
+        assertEquals(2, getSecretValueResult.getVersionStages().size());
+        assertThat(getSecretValueResult.getVersionStages(), hasItem(LATEST_LABEL));
+        assertThat(getSecretValueResult.getVersionStages(), hasItem(SECRET_LABEL_2));
+
+        // Make a request with a label
+        request = com.aws.greengrass.secretmanager.model.v1.GetSecretValueRequest
+                .builder().secretId(SECRET_NAME_1).versionStage(SECRET_LABEL_1).build();
+        getSecretValueResult = sm.getSecret(request);
+
+        assertEquals(SECRET_VALUE_1, getSecretValueResult.getSecretString());
+        assertEquals(ByteBuffer.wrap(SECRET_VALUE_BINARY_1), getSecretValueResult.getSecretBinary());
+        assertEquals(Date.from(SECRET_DATE_1), getSecretValueResult.getCreatedDate());
+        assertEquals(SECRET_NAME_1, getSecretValueResult.getName());
+        assertEquals(ARN_1, getSecretValueResult.getArn());
+        assertEquals(SECRET_VERSION_1, getSecretValueResult.getVersionId());
+        assertEquals(2, getSecretValueResult.getVersionStages().size());
+        assertThat(getSecretValueResult.getVersionStages(), hasItem(LATEST_LABEL));
+        assertThat(getSecretValueResult.getVersionStages(), hasItem(SECRET_LABEL_1));
+
+        request = com.aws.greengrass.secretmanager.model.v1.GetSecretValueRequest
+                .builder().secretId(SECRET_NAME_2).versionStage(SECRET_LABEL_2).build();
+        getSecretValueResult = sm.getSecret(request);
+
+        assertEquals(SECRET_VALUE_2, getSecretValueResult.getSecretString());
+        assertEquals(ByteBuffer.wrap(SECRET_VALUE_BINARY_2), getSecretValueResult.getSecretBinary());
+        assertEquals(Date.from(SECRET_DATE_2), getSecretValueResult.getCreatedDate());
+        assertEquals(SECRET_NAME_2, getSecretValueResult.getName());
+        assertEquals(ARN_2, getSecretValueResult.getArn());
+        assertEquals(SECRET_VERSION_2, getSecretValueResult.getVersionId());
+        assertEquals(2, getSecretValueResult.getVersionStages().size());
+        assertThat(getSecretValueResult.getVersionStages(), hasItem(LATEST_LABEL));
+        assertThat(getSecretValueResult.getVersionStages(), hasItem(SECRET_LABEL_2));
+
+        // Make a request with version id now
+        request = com.aws.greengrass.secretmanager.model.v1.GetSecretValueRequest
+                .builder().secretId(SECRET_NAME_1).versionId(SECRET_VERSION_1).build();
+        getSecretValueResult = sm.getSecret(request);
+
+        assertEquals(SECRET_VALUE_1, getSecretValueResult.getSecretString());
+        assertEquals(ByteBuffer.wrap(SECRET_VALUE_BINARY_1), getSecretValueResult.getSecretBinary());
+        assertEquals(ARN_1, getSecretValueResult.getArn());
+        assertEquals(SECRET_NAME_1, getSecretValueResult.getName());
+        assertEquals(Date.from(SECRET_DATE_1), getSecretValueResult.getCreatedDate());
+        assertEquals(SECRET_VERSION_1, getSecretValueResult.getVersionId());
+        assertEquals(2, getSecretValueResult.getVersionStages().size());
+        assertThat(getSecretValueResult.getVersionStages(), hasItem(LATEST_LABEL));
+        assertThat(getSecretValueResult.getVersionStages(), hasItem(SECRET_LABEL_1));
+
+        request = com.aws.greengrass.secretmanager.model.v1.GetSecretValueRequest
+                .builder().secretId(SECRET_NAME_2).versionId(SECRET_VERSION_2).build();
+        getSecretValueResult = sm.getSecret(request);
+
+        assertEquals(SECRET_VALUE_2, getSecretValueResult.getSecretString());
+        assertEquals(ByteBuffer.wrap(SECRET_VALUE_BINARY_2), getSecretValueResult.getSecretBinary());
+        assertEquals(Date.from(SECRET_DATE_2), getSecretValueResult.getCreatedDate());
+        assertEquals(SECRET_NAME_2, getSecretValueResult.getName());
+        assertEquals(ARN_2, getSecretValueResult.getArn());
+        assertEquals(SECRET_VERSION_2, getSecretValueResult.getVersionId());
+        assertEquals(2, getSecretValueResult.getVersionStages().size());
+        assertThat(getSecretValueResult.getVersionStages(), hasItem(LATEST_LABEL));
+        assertThat(getSecretValueResult.getVersionStages(), hasItem(SECRET_LABEL_2));
     }
 
     @Test

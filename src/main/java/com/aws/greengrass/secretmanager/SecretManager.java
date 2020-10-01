@@ -15,6 +15,7 @@ import com.aws.greengrass.secretmanager.crypto.PemFile;
 import com.aws.greengrass.secretmanager.crypto.RSAMasterKey;
 import com.aws.greengrass.secretmanager.exception.SecretCryptoException;
 import com.aws.greengrass.secretmanager.exception.SecretManagerException;
+import com.aws.greengrass.secretmanager.exception.v1.GetSecretException;
 import com.aws.greengrass.secretmanager.kernel.KernelClient;
 import com.aws.greengrass.secretmanager.model.AWSSecretResponse;
 import com.aws.greengrass.secretmanager.model.SecretConfiguration;
@@ -25,12 +26,14 @@ import software.amazon.awssdk.services.secretsmanager.model.GetSecretValueReques
 import software.amazon.awssdk.services.secretsmanager.model.GetSecretValueResponse;
 
 import java.io.IOException;
+import java.nio.ByteBuffer;
 import java.nio.charset.StandardCharsets;
 import java.security.PrivateKey;
 import java.security.PublicKey;
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.Base64;
+import java.util.Date;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Set;
@@ -122,32 +125,7 @@ public class SecretManager {
                 GetSecretValueRequest request = GetSecretValueRequest.builder().secretId(secretArn)
                         .versionStage(label).build();
                 try {
-                    GetSecretValueResponse result = secretClient.getSecret(request);
-                    // Save the secrets to local store for offline access
-                    String encodedSecretString = null;
-                    if (result.secretString() != null) {
-                        byte[] encryptedSecretString = crypter.encrypt(
-                                result.secretString().getBytes(StandardCharsets.UTF_8),
-                                result.arn());
-                        encodedSecretString = Base64.getEncoder().encodeToString(encryptedSecretString);
-                    }
-                    String encodedSecretBinary = null;
-                    if (result.secretBinary() != null) {
-                        byte[] encryptedSecretBinary = crypter.encrypt(
-                                result.secretBinary().asByteArray(),
-                                result.arn());
-                        encodedSecretBinary = Base64.getEncoder().encodeToString(encryptedSecretBinary);
-                    }
-                    // reuse all fields except the secret value, replace secret value with encrypted value
-                    AWSSecretResponse encryptedResult = AWSSecretResponse.builder()
-                            .encryptedSecretString(encodedSecretString)
-                            .encryptedSecretBinary(encodedSecretBinary)
-                            .name(result.name())
-                            .arn(result.arn())
-                            .createdDate(result.createdDate().toEpochMilli())
-                            .versionId(result.versionId())
-                            .versionStages(result.versionStages())
-                            .build();
+                    AWSSecretResponse encryptedResult = fetchAndEncryptAWSResponse(request);
                     downloadedSecrets.add(encryptedResult);
                 } catch (IOException e) {
                     String actualLabel = "";
@@ -182,6 +160,36 @@ public class SecretManager {
         configuredSecrets.forEach((s) -> previousConfiguredSecrets.addAllAbsent(s.getArnLabelList()));
     }
 
+    private AWSSecretResponse fetchAndEncryptAWSResponse(GetSecretValueRequest request)
+            throws SecretCryptoException, SecretManagerException {
+        GetSecretValueResponse result = secretClient.getSecret(request);
+        // Save the secrets to local store for offline access
+        String encodedSecretString = null;
+        if (result.secretString() != null) {
+            byte[] encryptedSecretString = crypter.encrypt(
+                    result.secretString().getBytes(StandardCharsets.UTF_8),
+                    result.arn());
+            encodedSecretString = Base64.getEncoder().encodeToString(encryptedSecretString);
+        }
+        String encodedSecretBinary = null;
+        if (result.secretBinary() != null) {
+            byte[] encryptedSecretBinary = crypter.encrypt(
+                    result.secretBinary().asByteArray(),
+                    result.arn());
+            encodedSecretBinary = Base64.getEncoder().encodeToString(encryptedSecretBinary);
+        }
+         // reuse all fields except the secret value, replace secret value with encrypted value
+         return AWSSecretResponse.builder()
+                .encryptedSecretString(encodedSecretString)
+                .encryptedSecretBinary(encodedSecretBinary)
+                .name(result.name())
+                .arn(result.arn())
+                .createdDate(result.createdDate().toEpochMilli())
+                .versionId(result.versionId())
+                .versionStages(result.versionStages())
+                .build();
+    }
+
     /**
      * load the secrets from a local store. This is used across restarts to load secrets from store.
      * @throws SecretManagerException when there are issues reading from disk
@@ -198,10 +206,10 @@ public class SecretManager {
     /*
     * Cache holds multiple references of the secret with different keys for fast lookup
     * Secret with arn1, version V1, labels as L1 and L2 is loaded as 4 entries
-    * arn1 -> secret
-    * arn1:v1 -> secret
-    * arn1:l1 -> secret
-    * arn1:l2 -> secret
+    * arn1 -> secret1
+    * arn1:v1 -> secret2
+    * arn1:l1 -> secret3
+    * arn1:l2 -> secret4
     */
     private void loadCache(AWSSecretResponse awsSecretResponse) throws SecretManagerException {
         GetSecretValueResponse decryptedResponse = null;
@@ -246,6 +254,110 @@ public class SecretManager {
         }
     }
 
+    private GetSecretValueResponse getSecret(String secretId, String versionId, String versionStage)
+        throws GetSecretException {
+        String secretNotFoundErr = "Secret not found ";
+        String arn = secretId;
+        if (Utils.isEmpty(secretId)) {
+            throw new GetSecretException(400, "SecretId absent in the request");
+        }
+        // normalize name to arn
+        if (!Pattern.matches(VALID_SECRET_ARN_PATTERN, secretId)) {
+            if (!nametoArnMap.containsKey(secretId)) {
+                throw new GetSecretException(404, secretNotFoundErr + secretId);
+            }
+            arn = nametoArnMap.get(secretId);
+        }
+
+        // We cannot just return the value, as same arn can have multiple labels associated to it.
+        if (!cache.containsKey(arn)) {
+            throw new GetSecretException(404, secretNotFoundErr + secretId);
+        }
+
+        // Both are optional
+        if (!Utils.isEmpty(versionId) && !Utils.isEmpty(versionStage)) {
+            throw new GetSecretException(400,
+                    "Both versionId and Stage are set in the request");
+        }
+
+        if (!Utils.isEmpty(versionId)) {
+            if (!cache.containsKey(arn + versionId)) {
+                String errorStr = "Version Id " + versionId + " not found for secret " + secretId;
+                throw new GetSecretException(404, errorStr);
+            }
+            return cache.get(arn + versionId);
+        }
+
+        if (!Utils.isEmpty(versionStage)) {
+            if (!cache.containsKey(arn + versionStage)) {
+                String errorStr = "Version stage " + versionStage + " not found for secret " + secretId;
+                throw new GetSecretException(404, errorStr);
+            }
+            return cache.get(arn + versionStage);
+        }
+        // If none of the label and version are specified then return LATEST_LABEL
+        if (!cache.containsKey((arn + LATEST_LABEL))) {
+            throw new GetSecretException(404, secretNotFoundErr + secretId);
+        }
+        return cache.get(arn + LATEST_LABEL);
+    }
+
+    /**
+     * Get v1 style secret, to support lambdas using v1 SDK to get secrets.
+     * @param request       v1 sdk request from lambda to get secret
+     * @return secret       v1 sdk response containing secret and metadata
+     * @throws GetSecretException    when there is any issue accessing secret
+     */
+    public com.aws.greengrass.secretmanager.model.v1.GetSecretValueResult
+        getSecret(com.aws.greengrass.secretmanager.model.v1.GetSecretValueRequest request) throws GetSecretException {
+            GetSecretValueResponse secretResponse = getSecret(request.getSecretId(), request.getVersionId(),
+                    request.getVersionStage());
+            return translateModeltov1(secretResponse);
+    }
+
+    /**
+     * Get a secret. Secrets are stored in memory and only loaded from disk on reload or when synced from cloud.
+     * @param request IPC request from kernel to get secret
+     * @return secret IPC response containing secret and metadata
+     */
+    public com.aws.greengrass.ipc.services.secret.GetSecretValueResult
+        getSecret(com.aws.greengrass.ipc.services.secret.GetSecretValueRequest request) {
+        try {
+            GetSecretValueResponse secretResponse = getSecret(request.getSecretId(), request.getVersionId(),
+                    request.getVersionStage());
+            return translateModeltoIpc(secretResponse);
+        } catch (GetSecretException e) {
+            return buildIPCErrorResponse(SecretResponseStatus.InvalidRequest, e.getMessage());
+        }
+    }
+
+    private com.aws.greengrass.ipc.services.secret.GetSecretValueResult
+        buildIPCErrorResponse(SecretResponseStatus status, String error) {
+        return com.aws.greengrass.ipc.services.secret.GetSecretValueResult
+                .builder()
+                .responseStatus(status)
+                .errorMessage(error)
+                .build();
+    }
+
+    private com.aws.greengrass.secretmanager.model.v1.GetSecretValueResult
+        translateModeltov1(GetSecretValueResponse response) {
+        byte[] secretBinary = null;
+        if (response.secretBinary() != null) {
+            secretBinary = response.secretBinary().asByteArray();
+        }
+        return com.aws.greengrass.secretmanager.model.v1.GetSecretValueResult
+                .builder()
+                .arn(response.arn())
+                .name(response.name())
+                .secretString(response.secretString())
+                .secretBinary(ByteBuffer.wrap(secretBinary))
+                .versionId(response.versionId())
+                .versionStages(response.versionStages())
+                .createdDate(Date.from(response.createdDate()))
+                .build();
+    }
+
     private com.aws.greengrass.ipc.services.secret.GetSecretValueResult
         translateModeltoIpc(GetSecretValueResponse response) {
         byte[] secretBinary = null;
@@ -260,72 +372,6 @@ public class SecretManager {
                 .versionId(response.versionId())
                 .versionStages(response.versionStages())
                 .responseStatus(SecretResponseStatus.Success)
-                .build();
-    }
-
-    /**
-     * Get a secret. Secrets are stored in memory and only loaded from disk on reload or when synced from cloud.
-     * @param request IPC request from kernel to get secret
-     * @return secret IPC response containing secret and metadata
-     */
-    public com.aws.greengrass.ipc.services.secret.GetSecretValueResult
-        getSecret(com.aws.greengrass.ipc.services.secret.GetSecretValueRequest request) {
-
-        // TODO: Add support for v1 IPC
-        String secretId = request.getSecretId();
-        String arn = secretId;
-        if (Utils.isEmpty(secretId)) {
-            return buildErrorResponse(SecretResponseStatus.InvalidRequest, "SecretId absent in the request");
-        }
-        // normalize name to arn
-        if (!Pattern.matches(VALID_SECRET_ARN_PATTERN, secretId)) {
-            if (!nametoArnMap.containsKey(secretId)) {
-                return buildErrorResponse(SecretResponseStatus.InvalidRequest, "Secret not found " + secretId);
-            }
-            arn = nametoArnMap.get(secretId);
-        }
-
-        // We cannot just return the value, as same arn can have multiple labels associated to it.
-        if (!cache.containsKey(arn)) {
-            return buildErrorResponse(SecretResponseStatus.InvalidRequest, "Secret not found " + secretId);
-        }
-
-        // Both are optional
-        String versionId = request.getVersionId();
-        String versionStage = request.getVersionStage();
-        if (!Utils.isEmpty(versionId) && !Utils.isEmpty(versionStage)) {
-            return buildErrorResponse(SecretResponseStatus.InvalidRequest,
-                    "Both versionId and Stage are set in the request");
-        }
-
-        if (!Utils.isEmpty(versionId)) {
-            if (!cache.containsKey(arn + versionId)) {
-                String errorStr = "Version Id " + versionId + " not found for secret " + secretId;
-                return buildErrorResponse(SecretResponseStatus.InvalidRequest, errorStr);
-            }
-            return translateModeltoIpc(cache.get(arn + versionId));
-        }
-
-        if (!Utils.isEmpty(versionStage)) {
-            if (!cache.containsKey(arn + versionStage)) {
-                String errorStr = "Version stage " + versionStage + " not found for secret " + secretId;
-                return buildErrorResponse(SecretResponseStatus.InvalidRequest, errorStr);
-            }
-            return translateModeltoIpc(cache.get(arn + versionStage));
-        }
-        // If none of the label and version are specified then return LATEST_LABEL
-        if (!cache.containsKey((arn + LATEST_LABEL))) {
-            return buildErrorResponse(SecretResponseStatus.InvalidRequest, "Secret not found " + secretId);
-        }
-        return translateModeltoIpc(cache.get(arn + LATEST_LABEL));
-    }
-
-    private com.aws.greengrass.ipc.services.secret.GetSecretValueResult
-        buildErrorResponse(SecretResponseStatus status, String error) {
-        return com.aws.greengrass.ipc.services.secret.GetSecretValueResult
-                .builder()
-                .responseStatus(status)
-                .errorMessage(error)
                 .build();
     }
 }
