@@ -39,7 +39,7 @@ public class RSAMasterKey implements MasterKey {
             byte[] sha1 = MessageDigest.getInstance("SHA-1").digest(key.getEncoded());
             return new String(Hex.encode(sha1));
         } catch (NoSuchAlgorithmException e) {
-            throw new SecretCryptoException("Unable to get SHA-1 provider");
+            throw new SecretCryptoException("Unable to get SHA-1 provider", e);
         }
     }
 
