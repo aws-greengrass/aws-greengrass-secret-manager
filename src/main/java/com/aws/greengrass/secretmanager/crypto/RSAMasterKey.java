@@ -6,7 +6,11 @@
 package com.aws.greengrass.secretmanager.crypto;
 
 import com.amazonaws.encryptionsdk.jce.JceMasterKey;
+import com.aws.greengrass.secretmanager.exception.SecretCryptoException;
+import org.bouncycastle.util.encoders.Hex;
 
+import java.security.MessageDigest;
+import java.security.NoSuchAlgorithmException;
 import java.security.PrivateKey;
 import java.security.PublicKey;
 import java.util.UUID;
@@ -20,14 +24,23 @@ public class RSAMasterKey implements MasterKey {
     private JceMasterKey masterKey;
 
     private RSAMasterKey(final PublicKey publicKey,
-                         final PrivateKey privateKey) {
-        String keyId = UUID.randomUUID().toString();
+                         final PrivateKey privateKey) throws SecretCryptoException {
+        String keyId = publicKeySHA(publicKey);
         this.masterKey = JceMasterKey.getInstance(publicKey, privateKey, KEY_PROVIDER, keyId, WRAPPING_ALGO);
     }
 
     public static MasterKey createInstance(final PublicKey publicKey,
-                                           final PrivateKey privateKey) {
+                                           final PrivateKey privateKey) throws SecretCryptoException {
         return new RSAMasterKey(publicKey, privateKey);
+    }
+
+    private String publicKeySHA(final PublicKey key) throws SecretCryptoException {
+        try {
+            byte[] sha1 = MessageDigest.getInstance("SHA-1").digest(key.getEncoded());
+            return new String(Hex.encode(sha1));
+        } catch (NoSuchAlgorithmException e) {
+            throw new SecretCryptoException("Unable to get SHA-1 provider", e);
+        }
     }
 
     @Override
