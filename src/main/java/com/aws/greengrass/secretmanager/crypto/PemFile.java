@@ -79,11 +79,10 @@ public class PemFile {
      * @throws SecretCryptoException when there is error generating the key from file
      */
     public static PublicKey generatePublicKeyFromCert(String path) throws SecretCryptoException {
-        try {
-            FileInputStream fileInputStream = new FileInputStream(path);
+        try (FileInputStream fileInputStream = new FileInputStream(path)) {
             CertificateFactory cf = CertificateFactory.getInstance("X.509", JCE_PROVIDER);
-            X509Certificate cert = (X509Certificate)cf.generateCertificate(fileInputStream);
-            PublicKey publicKey =  cert.getPublicKey();
+            X509Certificate cert = (X509Certificate) cf.generateCertificate(fileInputStream);
+            PublicKey publicKey = cert.getPublicKey();
             X509EncodedKeySpec x509EncodedKeySpec = new X509EncodedKeySpec(publicKey.getEncoded());
             KeyFactory keyFactory = KeyFactory.getInstance(RSA_ALGO, JCE_PROVIDER);
             return keyFactory.generatePublic(x509EncodedKeySpec);
