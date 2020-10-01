@@ -28,6 +28,7 @@ public class CrypterTest {
     private static final int THIRTY_TWO_KB = 32768;
     private KeyChain keyChain;
     private MasterKey masterKey;
+    private KeyPair kp;
 
     private KeyPair getDummyKey() throws NoSuchAlgorithmException {
         KeyPairGenerator kpg = KeyPairGenerator.getInstance("RSA");
@@ -43,20 +44,28 @@ public class CrypterTest {
 
     @BeforeEach
     void createKeyChain() throws SecretCryptoException, NoSuchAlgorithmException {
-        KeyPair kp = getDummyKey();
+        kp = getDummyKey();
         masterKey = RSAMasterKey.createInstance(kp.getPublic(), kp.getPrivate());
         keyChain = new KeyChain();
         keyChain.addMasterKey(masterKey);
     }
 
     @Test
-    void GIVEN_secret_key_WHEN_crypter_encrypts_THEN_decrypt_works() throws SecretCryptoException {
+    void GIVEN_secret_key_WHEN_crypter_encrypts_THEN_decrypt_works()
+            throws SecretCryptoException, NoSuchAlgorithmException {
         byte[] plainText = DUMMY_STRING.getBytes(StandardCharsets.UTF_8);
         Crypter crypter = new Crypter(keyChain);
         byte[] cipherText = crypter.encrypt(plainText, CONTEXT_STRING);
-
         byte[] result = crypter.decrypt(cipherText, CONTEXT_STRING);
         assertEquals(DUMMY_STRING, new String(result, StandardCharsets.UTF_8));
+
+        // Try creating a new Crypter instance for same key pair, it should be able to decrypt as well
+        MasterKey anotherMasterKey = RSAMasterKey.createInstance(kp.getPublic(), kp.getPrivate());
+        KeyChain anotherKeyChain = new KeyChain();
+        anotherKeyChain.addMasterKey(anotherMasterKey);
+        Crypter anotherCrypter = new Crypter(anotherKeyChain);
+        byte[] anotherResult = anotherCrypter.decrypt(cipherText, CONTEXT_STRING);
+        assertEquals(DUMMY_STRING, new String(anotherResult, StandardCharsets.UTF_8));
 
         // Try a large string now
         String largeString = getRandomString(THIRTY_TWO_KB);
