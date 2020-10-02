@@ -25,6 +25,7 @@ import software.amazon.awssdk.core.SdkBytes;
 import software.amazon.awssdk.services.secretsmanager.model.GetSecretValueRequest;
 import software.amazon.awssdk.services.secretsmanager.model.GetSecretValueResponse;
 
+import java.io.IOException;
 import java.nio.ByteBuffer;
 import java.nio.charset.StandardCharsets;
 import java.security.PrivateKey;
@@ -57,7 +58,7 @@ public class SecretManager {
     private ConcurrentHashMap<String, String> nametoArnMap = new ConcurrentHashMap<>();
 
     private final AWSSecretClient secretClient;
-    private final SecretDao<SecretDocument> secretDao;
+    private final SecretDao<SecretDocument, AWSSecretResponse> secretDao;
     private final Crypter crypter;
 
     /**
@@ -122,8 +123,20 @@ public class SecretManager {
                 try {
                     AWSSecretResponse encryptedResult = fetchAndEncryptAWSResponse(request);
                     downloadedSecrets.add(encryptedResult);
-                } catch (Throwable e) {
-                    logger.atWarn().kv("Secret ", secretArn).log("Could not fetch secret from cloud", e);
+                } catch (IOException e) {
+                    AWSSecretResponse secretFromDao = secretDao.get(secretArn, label);
+                    if (secretFromDao != null) {
+                        downloadedSecrets.add(secretFromDao);
+                        logger.atDebug().kv("secret", secretArn).kv("label", label)
+                                .log("Secret configuration is not changed. Loaded from local store");
+                        logger.atWarn().kv("secret", secretArn).kv("label", label)
+                                .log(String.format("Could not sync secret %s, label %s", secretArn, label));
+                    } else {
+                        throw new SecretManagerException(
+                                String.format("Failed to sync secret %s, label %s", secretArn, label), e);
+                    }
+                } catch (Exception e) {
+                    throw new SecretManagerException(e);
                 }
             }
         }
@@ -133,7 +146,7 @@ public class SecretManager {
     }
 
     private AWSSecretResponse fetchAndEncryptAWSResponse(GetSecretValueRequest request)
-            throws SecretCryptoException, SecretManagerException {
+            throws SecretCryptoException, SecretManagerException, IOException {
         GetSecretValueResponse result = secretClient.getSecret(request);
         // Save the secrets to local store for offline access
         String encodedSecretString = null;

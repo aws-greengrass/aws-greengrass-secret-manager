@@ -20,6 +20,7 @@ import software.amazon.awssdk.services.secretsmanager.model.InvalidParameterExce
 import software.amazon.awssdk.services.secretsmanager.model.InvalidRequestException;
 import software.amazon.awssdk.services.secretsmanager.model.ResourceNotFoundException;
 
+import java.io.IOException;
 import java.time.Instant;
 import java.util.Arrays;
 import java.util.UUID;
@@ -27,6 +28,8 @@ import java.util.UUID;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.Mockito.times;
+import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 @ExtendWith({MockitoExtension.class, GGExtension.class})
@@ -41,7 +44,7 @@ class AWSSecretClientTest {
     SecretsManagerClient mockAwsClient;
 
     @Test
-    void GIVEN_aws_client_WHEN_get_secret_THEN_secret_returned() throws SecretManagerException {
+    void GIVEN_aws_client_WHEN_get_secret_THEN_secret_returned() throws SecretManagerException, IOException {
         GetSecretValueResponse mockResult = GetSecretValueResponse.builder()
                 .secretString(SECRET_VALUE)
                 .arn(ARN)
@@ -76,6 +79,38 @@ class AWSSecretClientTest {
 
         when(mockAwsClient.getSecretValue(any(GetSecretValueRequest.class))).thenThrow(InvalidRequestException.class);
         assertThrows(SecretManagerException.class, () -> cloud.getSecret(request));
+
+        when(mockAwsClient.getSecretValue(any(GetSecretValueRequest.class))).thenAnswer(invocation -> {
+            throw new IOException();
+        }).thenAnswer(invocation -> {
+            throw new IOException();
+        }).thenAnswer(invocation -> {
+            throw new IOException(); });
+        assertThrows(IOException.class, () -> cloud.getSecret(request));
+    }
+
+    @Test
+    void GIVEN_aws_client_throws_WHEN_get_secret_THEN_retry_and_return() throws SecretManagerException,
+            IOException {
+        GetSecretValueResponse mockResult = GetSecretValueResponse.builder()
+                .secretString(SECRET_VALUE)
+                .arn(ARN)
+                .createdDate(Instant.now())
+                .versionId(UUID.randomUUID().toString())
+                .versionStages(Arrays.asList(new String[]{LATEST_LABEL}))
+                .name(SECRET_NAME)
+                .build();
+        when(mockAwsClient.getSecretValue(any(GetSecretValueRequest.class))).thenAnswer(invocation -> {
+            throw new IOException();
+        }).thenAnswer(invocation -> {
+            throw new IOException();
+        }).thenReturn(mockResult);
+        AWSSecretClient cloud = new AWSSecretClient(mockAwsClient);
+        GetSecretValueRequest request = GetSecretValueRequest.builder().secretId(SECRET_NAME).versionStage(LATEST_LABEL).build();
+        GetSecretValueResponse result = cloud.getSecret(request);
+        verify(mockAwsClient, times(3)).getSecretValue(any(GetSecretValueRequest.class));
+        assertEquals(SECRET_NAME, result.name());
+        assertEquals(SECRET_VALUE, result.secretString());
     }
 
     @Test

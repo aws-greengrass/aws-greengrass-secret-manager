@@ -6,10 +6,15 @@
 package com.aws.greengrass.secretmanager;
 
 import com.aws.greengrass.deployment.DeviceConfiguration;
+import com.aws.greengrass.deployment.exceptions.AWSIotException;
+import com.aws.greengrass.iot.model.IotCloudResponse;
 import com.aws.greengrass.secretmanager.exception.SecretManagerException;
 import com.aws.greengrass.tes.LazyCredentialProvider;
+import com.aws.greengrass.util.BaseRetryableAccessor;
 import com.aws.greengrass.util.Coerce;
+import com.aws.greengrass.util.CrashableSupplier;
 import com.aws.greengrass.util.Utils;
+import software.amazon.awssdk.crt.http.HttpClientConnection;
 import software.amazon.awssdk.regions.Region;
 import software.amazon.awssdk.services.secretsmanager.SecretsManagerClient;
 import software.amazon.awssdk.services.secretsmanager.model.DecryptionFailureException;
@@ -20,11 +25,17 @@ import software.amazon.awssdk.services.secretsmanager.model.InvalidParameterExce
 import software.amazon.awssdk.services.secretsmanager.model.InvalidRequestException;
 import software.amazon.awssdk.services.secretsmanager.model.ResourceNotFoundException;
 
+import java.io.IOException;
+import java.util.Arrays;
+import java.util.Collections;
+import java.util.HashSet;
 import javax.inject.Inject;
 
 public class AWSSecretClient {
 
     private final SecretsManagerClient secretsManagerClient;
+    private static final int RETRY_COUNT = 3;
+    private static final int BACKOFF_MILLIS = 200;
 
     /**
      * Constructor which utilizes  TES for initializing AWS client.
@@ -48,15 +59,19 @@ public class AWSSecretClient {
      * @param request AWS request for fetching secret from cloud
      * @return AWS secret response
      * @throws SecretManagerException If there is a problem fetching secret
+     * @throws IOException If there is a network error
      */
-    public GetSecretValueResponse getSecret(GetSecretValueRequest request) throws SecretManagerException {
-        // TODO: Add retry for fetches
+    public GetSecretValueResponse getSecret(GetSecretValueRequest request) throws SecretManagerException, IOException {
         String errorMsg = String.format("Exception occurred while fetching secrets "
                         + "from AWSSecretsManager for secret: %s, version: %s, label: %s",
                 request.secretId(), request.versionId(), request.versionStage());
         try {
             validateInput(request);
-            GetSecretValueResponse response = secretsManagerClient.getSecretValue(request);
+            BaseRetryableAccessor accessor = new BaseRetryableAccessor();
+            CrashableSupplier<GetSecretValueResponse, IOException> getSecretValueResponse =
+                    () -> secretsManagerClient.getSecretValue(request);
+            GetSecretValueResponse response = accessor.retry(RETRY_COUNT, BACKOFF_MILLIS, getSecretValueResponse,
+                    new HashSet<>(Collections.singletonList(IOException.class)));
             validateResponse(response);
             return response;
         } catch (InternalServiceErrorException
@@ -65,7 +80,6 @@ public class AWSSecretClient {
                 | InvalidParameterException
                 | InvalidRequestException
                 | IllegalArgumentException e) {
-            // TODO: Separate out network errors for retry and try hard for secret download in that case.
             throw new SecretManagerException(errorMsg, e);
         }
     }
