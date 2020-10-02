@@ -12,6 +12,7 @@ import com.aws.greengrass.secretmanager.kernel.KernelClient;
 import com.aws.greengrass.secretmanager.model.AWSSecretResponse;
 import com.aws.greengrass.secretmanager.model.SecretDocument;
 import com.aws.greengrass.util.Coerce;
+import com.aws.greengrass.util.Utils;
 import com.fasterxml.jackson.databind.MapperFeature;
 import com.fasterxml.jackson.databind.ObjectMapper;
 
@@ -68,13 +69,20 @@ public class FileSecretDao implements SecretDao<SecretDocument, AWSSecretRespons
      * @throws SecretManagerException when there is any issue reading the store.
      */
     public synchronized AWSSecretResponse get(String secretArn, String label) throws SecretManagerException {
-        SecretDocument secrets = getAll();
-        for (AWSSecretResponse secretResponse : secrets.getSecrets()) {
-            if (secretArn.equals(secretResponse.getArn()) && secretResponse.getVersionStages().contains(label)) {
-                return secretResponse;
-            }
+        if (Utils.isEmpty(secretArn) || Utils.isEmpty(label)) {
+            throw new SecretManagerException("Cannot get secret response from store given empty arn or label");
         }
-        return null;
+        try {
+            SecretDocument secrets = getAll();
+            for (AWSSecretResponse secretResponse : secrets.getSecrets()) {
+                if (secretArn.equals(secretResponse.getArn()) && secretResponse.getVersionStages().contains(label)) {
+                    return secretResponse;
+                }
+            }
+            return null;
+        } catch (NoSecretFoundException e) {
+            return null;
+        }
     }
 
     /**

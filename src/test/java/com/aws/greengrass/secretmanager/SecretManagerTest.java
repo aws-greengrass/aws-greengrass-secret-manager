@@ -444,8 +444,8 @@ class SecretManagerTest {
         SecretManager sm = new SecretManager(mockAWSSecretClient, mockKernelClient, mockDao);
         // Secrets should not be loaded as the secret fails and should throw SecretManagerException
         assertThrows(SecretManagerException.class, () -> sm.syncFromCloud(getMockSecrets()));
-        verify(mockAWSSecretClient, times(1)).getSecret(awsClientRequestCaptor.capture());
-        verify(mockDao, times(0)).saveAll(documentArgumentCaptor.capture());
+        verify(mockAWSSecretClient, times(1)).getSecret(any());
+        verify(mockDao, times(0)).saveAll(any());
 
         // Now, update the aws client to return a result and then throw SecretManagerException for second secret
         // Secrets should not be loaded as one secret fails and should throw SecretManagerException
@@ -453,8 +453,8 @@ class SecretManagerTest {
         reset(mockDao);
         when(mockAWSSecretClient.getSecret(any())).thenReturn(getMockSecretA()).thenThrow(SecretManagerException.class);
         assertThrows(SecretManagerException.class, () -> sm.syncFromCloud(getMockSecrets()));
-        verify(mockAWSSecretClient, times(2)).getSecret(awsClientRequestCaptor.capture());
-        verify(mockDao, times(0)).saveAll(documentArgumentCaptor.capture());
+        verify(mockAWSSecretClient, times(2)).getSecret(any());
+        verify(mockDao, times(0)).saveAll(any());
 
         // Now, update the aws client to return a result and then throw IOException for second secret
         // Secrets should not be loaded as one secret fails and should throw SecretManagerException
@@ -462,8 +462,8 @@ class SecretManagerTest {
         reset(mockDao);
         when(mockAWSSecretClient.getSecret(any())).thenReturn(getMockSecretA()).thenThrow(IOException.class);
         assertThrows(SecretManagerException.class, () -> sm.syncFromCloud(getMockSecrets()));
-        verify(mockAWSSecretClient, times(2)).getSecret(awsClientRequestCaptor.capture());
-        verify(mockDao, times(0)).saveAll(documentArgumentCaptor.capture());
+        verify(mockAWSSecretClient, times(2)).getSecret(any());
+        verify(mockDao, times(0)).saveAll(any());
     }
 
     @Test
@@ -488,6 +488,8 @@ class SecretManagerTest {
         when(mockAWSSecretClient.getSecret(any())).thenThrow(IOException.class);
         sm.syncFromCloud(configuredSecret1);
         verify(mockDao, times(1)).saveAll(documentArgumentCaptor.capture());
+        // Now assert that one secret was persisted in the db
+        assertEquals(1, documentArgumentCaptor.getValue().getSecrets().size());
     }
 
     @Test
@@ -533,6 +535,8 @@ class SecretManagerTest {
         when(mockAWSSecretClient.getSecret(any())).thenReturn(getMockSecretB()).thenThrow(IOException.class);
         sm.syncFromCloud(configuredSecret);
         verify(mockDao, times(1)).saveAll(documentArgumentCaptor.capture());
+        // Now assert that both secret persisted in the db
+        assertEquals(2, documentArgumentCaptor.getValue().getSecrets().size());
     }
 
     @Test

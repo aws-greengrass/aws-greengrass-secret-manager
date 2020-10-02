@@ -182,11 +182,13 @@ class FileSecretDaoTest {
         assertThat(secretFromDaoArn2Label3.getVersionStages(), hasItem(LABEL3));
         assertThat(secretFromDaoArn2Label3.getVersionStages(), hasItem(LABEL4));
 
-        AWSSecretResponse secretNotFromDao1 = dao.get("invalidArn", LABEL1);
-        assertNull(secretNotFromDao1);
+        assertNull(dao.get("invalidArn", LABEL1));
+        assertNull(dao.get(ARN_1, "invalidLabel"));
 
-        AWSSecretResponse secretNotFromDao2 = dao.get(ARN_1, "invalidLabel");
-        assertNull(secretNotFromDao2);
+        assertThrows(SecretManagerException.class, () ->dao.get("", LABEL1));
+        assertThrows(SecretManagerException.class, () ->dao.get(ARN_1, ""));
+        assertThrows(SecretManagerException.class, () ->dao.get(null, LABEL1));
+        assertThrows(SecretManagerException.class, () ->dao.get(ARN_1, null));
     }
 
     @Test
@@ -198,7 +200,7 @@ class FileSecretDaoTest {
         when(mockTopic.getOnce()).thenReturn(null);
 
         assertThrows(NoSecretFoundException.class, () -> dao.getAll());
-        assertThrows(NoSecretFoundException.class, () -> dao.get(ARN_1, LABEL1));
+        assertNull(dao.get(ARN_1, LABEL1));
     }
 
     @Test
