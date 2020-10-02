@@ -13,6 +13,7 @@ import com.aws.greengrass.secretmanager.kernel.KernelClient;
 import com.aws.greengrass.secretmanager.model.AWSSecretResponse;
 import com.aws.greengrass.secretmanager.model.SecretDocument;
 import com.aws.greengrass.testcommons.testutilities.GGExtension;
+import com.aws.greengrass.util.Coerce;
 import com.fasterxml.jackson.databind.MapperFeature;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.junit.jupiter.api.BeforeEach;
@@ -35,7 +36,9 @@ import static com.aws.greengrass.secretmanager.FileSecretDao.SECRET_RESPONSE_TOP
 import static org.hamcrest.MatcherAssert.assertThat;
 import static org.hamcrest.Matchers.hasItem;
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
+import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
@@ -155,10 +158,41 @@ class FileSecretDaoTest {
         assertEquals(DATE_2, secondSecretFromDao.getCreatedDate());
         assertThat(secondSecretFromDao.getVersionStages(), hasItem(LABEL3));
         assertThat(secondSecretFromDao.getVersionStages(), hasItem(LABEL4));
+
+        // Validate get with arn and label
+        AWSSecretResponse secretFromDaoArn1Label1 = dao.get(ARN_1, LABEL1);
+        AWSSecretResponse secretFromDaoArn1Label2 = dao.get(ARN_1, LABEL2);
+        assertEquals(secretFromDaoArn1Label1,secretFromDaoArn1Label2);
+        assertEquals(SECRET_NAME_1, secretFromDaoArn1Label1.getName());
+        assertEquals(SECRET_STRING_1, secretFromDaoArn1Label1.getEncryptedSecretString());
+        assertEquals(ARN_1, secretFromDaoArn1Label1.getArn());
+        assertEquals(VERSION_ID_1, secretFromDaoArn1Label1.getVersionId());
+        assertEquals(DATE_1, secretFromDaoArn1Label1.getCreatedDate());
+        assertThat(secretFromDaoArn1Label1.getVersionStages(), hasItem(LABEL1));
+        assertThat(secretFromDaoArn1Label1.getVersionStages(), hasItem(LABEL2));
+
+        AWSSecretResponse secretFromDaoArn2Label3 = dao.get(ARN_2, LABEL3);
+        AWSSecretResponse secretFromDaoArn2Label4 = dao.get(ARN_2, LABEL4);
+        assertEquals(secretFromDaoArn2Label3,secretFromDaoArn2Label4);
+        assertEquals(SECRET_NAME_2, secretFromDaoArn2Label3.getName());
+        assertEquals(SECRET_STRING_2, secretFromDaoArn2Label3.getEncryptedSecretString());
+        assertEquals(ARN_2, secretFromDaoArn2Label3.getArn());
+        assertEquals(VERSION_ID_2, secretFromDaoArn2Label3.getVersionId());
+        assertEquals(DATE_2, secretFromDaoArn2Label3.getCreatedDate());
+        assertThat(secretFromDaoArn2Label3.getVersionStages(), hasItem(LABEL3));
+        assertThat(secretFromDaoArn2Label3.getVersionStages(), hasItem(LABEL4));
+
+        assertNull(dao.get("invalidArn", LABEL1));
+        assertNull(dao.get(ARN_1, "invalidLabel"));
+
+        assertThrows(SecretManagerException.class, () ->dao.get("", LABEL1));
+        assertThrows(SecretManagerException.class, () ->dao.get(ARN_1, ""));
+        assertThrows(SecretManagerException.class, () ->dao.get(null, LABEL1));
+        assertThrows(SecretManagerException.class, () ->dao.get(ARN_1, null));
     }
 
     @Test
-    void GIVEN_dao_store_WHEN_no_secret_saved_THEN_get_throws_exception() throws SecretManagerException, IOException {
+    void GIVEN_dao_store_WHEN_no_secret_saved_THEN_get_throws_exception() throws SecretManagerException {
         FileSecretDao dao = new FileSecretDao(mockKernelClient);
         Topic mockTopic = mock(Topic.class);
         when(mockConfiguration.lookup(SERVICES_NAMESPACE_TOPIC,
@@ -166,6 +200,25 @@ class FileSecretDaoTest {
         when(mockTopic.getOnce()).thenReturn(null);
 
         assertThrows(NoSecretFoundException.class, () -> dao.getAll());
+        assertNull(dao.get(ARN_1, LABEL1));
     }
 
+    @Test
+    void GIVEN_dao_store_WHEN_objectmapper_error_THEN_throws() throws SecretManagerException {
+        FileSecretDao dao = new FileSecretDao(mockKernelClient);
+        Topic mockTopic = mock(Topic.class);
+        when(mockConfiguration.lookup(SERVICES_NAMESPACE_TOPIC, SecretManagerService.SECRET_MANAGER_SERVICE_NAME,
+                SECRET_RESPONSE_TOPIC)).thenReturn(mockTopic);
+        // Make readValue() throw JsonProcessingException
+        when(Coerce.toString(mockTopic)).thenReturn(mockTopic.getClass().getName());
+        assertThrows(SecretManagerException.class, () -> dao.getAll());
+
+        List<AWSSecretResponse> response = getSecrets();
+        SecretDocument doc = new SecretDocument(response);
+        // Make withValue() throw IOException
+        when(mockTopic.withValue(anyString())).thenAnswer(invocation -> {
+            throw new IOException();
+        });
+        assertThrows(SecretManagerException.class, () -> dao.saveAll(doc));
+    }
 }

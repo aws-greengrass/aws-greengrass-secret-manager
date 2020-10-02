@@ -105,6 +105,7 @@ public class SecretManagerService extends PluginService {
         } catch (SecretManagerException e) {
             logger.atWarn().kv("service", SECRET_MANAGER_SERVICE_NAME).setCause(e)
                     .log("Unable to download secrets from cloud");
+            serviceErrored(e);
         }
     }
 
