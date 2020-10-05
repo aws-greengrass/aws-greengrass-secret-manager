@@ -50,10 +50,8 @@ import static org.hamcrest.Matchers.containsString;
 import static org.hamcrest.Matchers.hasItem;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNull;
-import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
-import static org.mockito.ArgumentMatchers.contains;
 import static org.mockito.Mockito.atLeastOnce;
 import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.reset;
@@ -108,9 +106,9 @@ public class SecretManagerServiceTest {
         kernel.shutdown();
     }
 
-    private FrameReader.Message getInputMessage() throws IOException {
+    private FrameReader.Message getInputMessage(String secretId) throws IOException {
         com.aws.greengrass.ipc.services.secret.GetSecretValueRequest request =
-                com.aws.greengrass.ipc.services.secret.GetSecretValueRequest.builder().secretId(SECRET_ID).build();
+                com.aws.greengrass.ipc.services.secret.GetSecretValueRequest.builder().secretId(secretId).build();
         ApplicationMessage msg = ApplicationMessage.builder().version(1)
                 .opCode(SecretClientOpCodes.GET_SECRET.ordinal())
                 .payload(IPCUtil.encode(request))
@@ -160,10 +158,11 @@ public class SecretManagerServiceTest {
 
 
         when(mockSecretManager.getSecret(any(GetSecretValueRequest.class))).thenReturn(mockSecretResponse1);
+        when(mockSecretManager.validateSecretId(SECRET_ID)).thenReturn(SECRET_ID);
         when(mockContext.getServiceName()).thenReturn("mockService");
         when(mockAuthorizationHandler.isAuthorized(stringCaptor.capture(), permissionCaptor.capture())).thenReturn(true);
 
-        FrameReader.Message inputMessage = getInputMessage();
+        FrameReader.Message inputMessage = getInputMessage(SECRET_ID);
         Future<FrameReader.Message> fut = kernel.getContext().get(SecretManagerService.class).handleMessage(inputMessage, mockContext);
         FrameReader.Message m = fut.get();
         com.aws.greengrass.ipc.services.secret.GetSecretValueResult returnedResult =
@@ -179,6 +178,18 @@ public class SecretManagerServiceTest {
         assertEquals(SECRET_ID, permissionCaptor.getValue().getResource());
         verify(mockAuthorizationHandler, atLeastOnce()).registerComponent(SecretManagerService.SECRET_MANAGER_SERVICE_NAME,
                 new HashSet<>(Arrays.asList(SecretManagerService.SECRETS_AUTHORIZATION_OPCODE)));
+
+        // Now request with secret name that maps to the arn
+        when(mockSecretManager.validateSecretId(SECRET_NAME)).thenReturn(SECRET_ID);
+        when(mockAuthorizationHandler.isAuthorized(stringCaptor.capture(), permissionCaptor.capture()))
+                .thenReturn(true);
+
+        inputMessage = getInputMessage(SECRET_NAME);
+        fut = kernel.getContext().get(SecretManagerService.class).handleMessage(inputMessage, mockContext);
+        m = fut.get();
+        com.aws.greengrass.ipc.services.secret.GetSecretValueResult newReturnedResult =
+                IPCUtil.decode(ApplicationMessage.fromBytes(m.getPayload()).getPayload(), GetSecretValueResult.class);
+        assertEquals(returnedResult, newReturnedResult);
     }
 
     @Test
@@ -197,9 +208,9 @@ public class SecretManagerServiceTest {
                         .createdDate(currentTime)
                         .build();
 
-
         when(mockSecretManager.getSecret(any(com.aws.greengrass.secretmanager.model.v1.GetSecretValueRequest.class)))
                 .thenReturn(expectedResponse);
+        when(mockSecretManager.validateSecretId(SECRET_ID)).thenReturn(SECRET_ID);
         when(mockAuthorizationHandler.isAuthorized(stringCaptor.capture(), permissionCaptor.capture())).thenReturn(true);
 
         com.aws.greengrass.secretmanager.model.v1.GetSecretValueRequest request =
@@ -227,24 +238,24 @@ public class SecretManagerServiceTest {
         assertEquals(SECRET_ID, permissionCaptor.getValue().getResource());
         verify(mockAuthorizationHandler, atLeastOnce()).registerComponent(SecretManagerService.SECRET_MANAGER_SERVICE_NAME,
                 new HashSet<>(Arrays.asList(SecretManagerService.SECRETS_AUTHORIZATION_OPCODE)));
+
+        // Now request with secret name that maps to the arn
+        when(mockSecretManager.validateSecretId(SECRET_NAME)).thenReturn(SECRET_ID);
+        com.aws.greengrass.secretmanager.model.v1.GetSecretValueRequest newRequest =
+                com.aws.greengrass.secretmanager.model.v1.GetSecretValueRequest.builder().secretId(SECRET_NAME)
+                        .versionId(VERSION_ID).build();
+        byte[] newByteRequest = CBOR_MAPPER.writeValueAsBytes(newRequest);
+        byte[] newResponse = kernel.getContext().get(SecretManagerService.class).getSecret(serviceName, newByteRequest);
+
+        com.aws.greengrass.secretmanager.model.v1.GetSecretValueResult newActualResponse = CBOR_MAPPER
+                .readValue(newResponse, com.aws.greengrass.secretmanager.model.v1.GetSecretValueResult.class);
+        assertEquals(actualResponse, newActualResponse);
     }
 
     @Test
     void GIVEN_secret_service_WHEN_v1_get_called_and_errors_THEN_correct_response_returned() throws Exception {
         startKernelWithConfig("config.yaml", State.RUNNING);
-        final String secretValue = "secretValue";
         final String serviceName = "mockService";
-        final Date currentTime = Date.from(Instant.now());
-        com.aws.greengrass.secretmanager.model.v1.GetSecretValueResult expectedResponse =
-                com.aws.greengrass.secretmanager.model.v1.GetSecretValueResult.builder()
-                        .secretString(secretValue)
-                        .arn(SECRET_ID)
-                        .name(SECRET_NAME)
-                        .versionId(VERSION_ID)
-                        .versionStages(Arrays.asList(new String[]{CURRENT_LABEL, VERSION_LABEL}))
-                        .createdDate(currentTime)
-                        .build();
-
 
         when(mockSecretManager.getSecret(any(com.aws.greengrass.secretmanager.model.v1.GetSecretValueRequest.class)))
                 .thenThrow(new GetSecretException(400, "getSecret Error"));
@@ -294,6 +305,16 @@ public class SecretManagerServiceTest {
 
         assertEquals(500, parsedResponse.getStatus());
         assertEquals("Generic Error", parsedResponse.getMessage());
+
+        // Now invalid secretId
+        when(mockSecretManager.validateSecretId(SECRET_ID)).thenThrow(new GetSecretException(400, "getSecret Error"));
+
+        response = kernel.getContext().get(SecretManagerService.class).getSecret(serviceName, byteRequest);
+        parsedResponse =
+                CBOR_MAPPER.readValue(response, com.aws.greengrass.secretmanager.model.v1.GetSecretValueError.class);
+
+        assertEquals(400, parsedResponse.getStatus());
+        assertEquals("getSecret Error", parsedResponse.getMessage());
     }
 
     @Test
@@ -346,7 +367,7 @@ public class SecretManagerServiceTest {
         when(mockContext.getServiceName()).thenReturn("mockService");
         when(mockAuthorizationHandler.isAuthorized(any(), any(Permission.class))).thenThrow(AuthorizationException.class);
 
-        FrameReader.Message inputMessage = getInputMessage();
+        FrameReader.Message inputMessage = getInputMessage(SECRET_ID);
         Future<FrameReader.Message> fut = kernel.getContext().get(SecretManagerService.class).handleMessage(inputMessage, mockContext);
         FrameReader.Message m = fut.get();
         com.aws.greengrass.ipc.services.secret.GetSecretValueResult returnedResult =
@@ -355,6 +376,26 @@ public class SecretManagerServiceTest {
         assertNull(returnedResult.getVersionId());
         assertNull(returnedResult.getVersionStages());
         assertEquals(SecretResponseStatus.Unauthorized, returnedResult.getStatus());
+    }
+
+    @Test
+    void GIVEN_secret_service_WHEN_request_invalid_THEN_correct_response_returned(ExtensionContext context)
+            throws Exception {
+        startKernelWithConfig("config.yaml", State.RUNNING);
+        ignoreExceptionOfType(context, GetSecretException.class);
+        when(mockContext.getServiceName()).thenReturn("mockService");
+        when(mockSecretManager.validateSecretId(SECRET_ID)).thenThrow(GetSecretException.class);
+
+        FrameReader.Message inputMessage = getInputMessage(SECRET_ID);
+        Future<FrameReader.Message> fut =
+                kernel.getContext().get(SecretManagerService.class).handleMessage(inputMessage, mockContext);
+        FrameReader.Message m = fut.get();
+        com.aws.greengrass.ipc.services.secret.GetSecretValueResult returnedResult =
+                IPCUtil.decode(ApplicationMessage.fromBytes(m.getPayload()).getPayload(), GetSecretValueResult.class);
+        assertNull(returnedResult.getSecretId());
+        assertNull(returnedResult.getVersionId());
+        assertNull(returnedResult.getVersionStages());
+        assertEquals(SecretResponseStatus.InvalidRequest, returnedResult.getStatus());
     }
 
     @Test

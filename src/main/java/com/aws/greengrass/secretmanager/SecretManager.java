@@ -52,6 +52,7 @@ public class SecretManager {
     public static final String VALID_SECRET_ARN_PATTERN =
             "arn:aws:secretsmanager:[a-z0-9\\-]+:[0-9]{12}:secret:([a-zA-Z0-9\\\\]+/)*"
                     + "[a-zA-Z0-9/_+=,.@\\-]+-[a-zA-Z0-9]+";
+    private final String secretNotFoundErr = "Secret not found ";
     private final Logger logger = LogManager.getLogger(SecretManager.class);
     // Cache which holds aws secrets result
     private ConcurrentHashMap<String, GetSecretValueResponse> cache = new ConcurrentHashMap<>();
@@ -241,23 +242,7 @@ public class SecretManager {
 
     private GetSecretValueResponse getSecret(String secretId, String versionId, String versionStage)
         throws GetSecretException {
-        String secretNotFoundErr = "Secret not found ";
-        String arn = secretId;
-        if (Utils.isEmpty(secretId)) {
-            throw new GetSecretException(400, "SecretId absent in the request");
-        }
-        // normalize name to arn
-        if (!Pattern.matches(VALID_SECRET_ARN_PATTERN, secretId)) {
-            if (!nametoArnMap.containsKey(secretId)) {
-                throw new GetSecretException(404, secretNotFoundErr + secretId);
-            }
-            arn = nametoArnMap.get(secretId);
-        }
-
-        // We cannot just return the value, as same arn can have multiple labels associated to it.
-        if (!cache.containsKey(arn)) {
-            throw new GetSecretException(404, secretNotFoundErr + secretId);
-        }
+        String arn = validateSecretId(secretId);
 
         // Both are optional
         if (!Utils.isEmpty(versionId) && !Utils.isEmpty(versionStage)) {
@@ -315,6 +300,34 @@ public class SecretManager {
             return buildIPCErrorResponse(SecretResponseStatus.InvalidRequest, e.getMessage());
         }
     }
+
+    /**
+     * Return secret arn given secretId. If secret name is provided, then return its mapped arn.
+     *
+     * @param secretId secret name or arn
+     * @return secret arn
+     * @throws GetSecretException when secret is not found
+     */
+    public String validateSecretId(String secretId) throws GetSecretException {
+        String arn = secretId;
+        if (Utils.isEmpty(secretId)) {
+            throw new GetSecretException(400, "SecretId absent in the request");
+        }
+        // normalize name to arn
+        if (!Pattern.matches(VALID_SECRET_ARN_PATTERN, secretId)) {
+            if (!nametoArnMap.containsKey(secretId)) {
+                throw new GetSecretException(404, secretNotFoundErr + secretId);
+            }
+            arn = nametoArnMap.get(secretId);
+        }
+
+        // We cannot just return the value, as same arn can have multiple labels associated to it.
+        if (!cache.containsKey(arn)) {
+            throw new GetSecretException(404, secretNotFoundErr + secretId);
+        }
+        return arn;
+    }
+
 
     private com.aws.greengrass.ipc.services.secret.GetSecretValueResult
         buildIPCErrorResponse(SecretResponseStatus status, String error) {

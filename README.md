@@ -9,7 +9,7 @@ Secret Manager is a Greengrass component that manages sensitive data stored with
  
  1. How are secrets stored on greengrass device?
  
-    Secrets are stored encrypted using a private key provided by the user or by default using the IoT thing 
+    Secrets are stored encrypted using the IoT thing 
     key associated with kernel.
     
  2. When are secrets synchronized from the cloud?
