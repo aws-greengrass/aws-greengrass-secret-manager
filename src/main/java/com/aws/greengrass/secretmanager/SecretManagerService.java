@@ -164,8 +164,8 @@ public class SecretManagerService extends PluginService {
             com.aws.greengrass.secretmanager.model.v1.GetSecretValueRequest getSecretValueRequest =
                     CBOR_MAPPER.readValue(request,
                             com.aws.greengrass.secretmanager.model.v1.GetSecretValueRequest.class);
-            // TODO: Add support for secret names
-            doAuthorization(SECRETS_AUTHORIZATION_OPCODE, serviceName, getSecretValueRequest.getSecretId());
+            validateSecretIdAndDoAuthorization(SECRETS_AUTHORIZATION_OPCODE, serviceName,
+                    getSecretValueRequest.getSecretId());
             logger.atInfo().event("secret-access").kv("Principal", serviceName)
                     .kv("secret", getSecretValueRequest.getSecretId()).log("requested secret");
             return CBOR_MAPPER.writeValueAsBytes(secretManager.getSecret(getSecretValueRequest));
@@ -207,7 +207,8 @@ public class SecretManagerService extends PluginService {
                 case GET_SECRET:
                     GetSecretValueRequest request =
                             CBOR_MAPPER.readValue(applicationMessage.getPayload(), GetSecretValueRequest.class);
-                    doAuthorization(sdkToAuthCode.get(opCode), context.getServiceName(), request.getSecretId());
+                    validateSecretIdAndDoAuthorization(sdkToAuthCode.get(opCode), context.getServiceName(),
+                            request.getSecretId());
                     logger.atInfo().event("secret-access").kv("Principal", context.getServiceName())
                             .kv("secret", request.getSecretId()).log("requested secret");
                     response = secretManager.getSecret(request);
@@ -227,6 +228,9 @@ public class SecretManagerService extends PluginService {
             if (t instanceof AuthorizationException) {
                 status = SecretResponseStatus.Unauthorized;
             }
+            if (t instanceof GetSecretException) {
+                status = SecretResponseStatus.InvalidRequest;
+            }
             SecretGenericResponse response = new SecretGenericResponse(status, t.getMessage());
             try {
                 ApplicationMessage responseMessage =
@@ -241,6 +245,12 @@ public class SecretManagerService extends PluginService {
             fut.completeExceptionally(new IPCException("Unable to serialize any responses"));
         }
         return fut;
+    }
+
+    private void validateSecretIdAndDoAuthorization(String opCode, String serviceName, String secretId)
+            throws AuthorizationException, GetSecretException {
+        String arn = secretManager.validateSecretId(secretId);
+        doAuthorization(opCode, serviceName, arn);
     }
 
     private void doAuthorization(String opCode, String serviceName, String secretId) throws AuthorizationException {
