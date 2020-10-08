@@ -323,8 +323,8 @@ public class SecretManagerServiceTest {
 
         // Now invalid secretId
         when(mockSecretManager.validateSecretId(SECRET_ID)).thenThrow(new GetSecretException(400, "getSecret Error"));
-
-        response = kernel.getContext().get(SecretManagerService.class).getSecret(serviceName, byteRequest).getError();
+        getSecretResponse = kernel.getContext().get(SecretManagerService.class).getSecret(serviceName, byteRequest);
+        response = getSecretResponse.getError();
         assertNull(getSecretResponse.getSecret());
         parsedResponse =
                 CBOR_MAPPER.readValue(response, com.aws.greengrass.secretmanager.model.v1.GetSecretValueError.class);
