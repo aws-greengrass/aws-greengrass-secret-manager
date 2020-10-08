@@ -27,6 +27,7 @@ import com.aws.greengrass.lifecyclemanager.PluginService;
 import com.aws.greengrass.secretmanager.exception.NoSecretFoundException;
 import com.aws.greengrass.secretmanager.exception.SecretManagerException;
 import com.aws.greengrass.secretmanager.exception.v1.GetSecretException;
+import com.aws.greengrass.secretmanager.model.GetSecretResponse;
 import com.aws.greengrass.secretmanager.model.SecretConfiguration;
 import com.aws.greengrass.secretmanager.model.v1.GetSecretValueError;
 import com.aws.greengrass.util.Coerce;
@@ -157,18 +158,18 @@ public class SecretManagerService extends PluginService {
      * @param request      v1 style get secret request
      * @return secret      v1 style secret response
      */
-    public byte[] getSecret(String serviceName, byte[] request) {
+    public GetSecretResponse getSecret(String serviceName, byte[] request) {
         int status;
         String message = null;
         try {
-            com.aws.greengrass.secretmanager.model.v1.GetSecretValueRequest getSecretValueRequest =
-                    CBOR_MAPPER.readValue(request,
-                            com.aws.greengrass.secretmanager.model.v1.GetSecretValueRequest.class);
+            com.aws.greengrass.secretmanager.model.v1.GetSecretValueRequest getSecretValueRequest = CBOR_MAPPER
+                    .readValue(request, com.aws.greengrass.secretmanager.model.v1.GetSecretValueRequest.class);
             validateSecretIdAndDoAuthorization(SECRETS_AUTHORIZATION_OPCODE, serviceName,
                     getSecretValueRequest.getSecretId());
             logger.atInfo().event("secret-access").kv("Principal", serviceName)
                     .kv("secret", getSecretValueRequest.getSecretId()).log("requested secret");
-            return CBOR_MAPPER.writeValueAsBytes(secretManager.getSecret(getSecretValueRequest));
+            return GetSecretResponse.builder()
+                    .secret(CBOR_MAPPER.writeValueAsBytes(secretManager.getSecret(getSecretValueRequest))).build();
         } catch (GetSecretException t) {
             status = t.getStatus();
             message = t.getMessage();
@@ -183,12 +184,12 @@ public class SecretManagerService extends PluginService {
             message = t.getMessage();
         }
         try {
-            return CBOR_MAPPER.writeValueAsBytes(
-                    GetSecretValueError.builder().status(status).message(message).build());
+            return GetSecretResponse.builder().error(CBOR_MAPPER
+                    .writeValueAsBytes(GetSecretValueError.builder().status(status).message(message).build())).build();
         } catch (IOException e) {
             logger.atError("secret-error").setCause(e).log("Failed to send error response");
         }
-        return "Internal Error".getBytes(StandardCharsets.UTF_8);
+        return GetSecretResponse.builder().error("Internal Error".getBytes(StandardCharsets.UTF_8)).build();
     }
 
     /**
