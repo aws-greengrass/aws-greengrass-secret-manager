@@ -5,7 +5,8 @@
 
 package com.aws.greengrass.secretmanager.model;
 
-import com.fasterxml.jackson.annotation.JsonInclude;
+import com.aws.greengrass.secretmanager.model.v1.GetSecretValueError;
+import com.aws.greengrass.secretmanager.model.v1.GetSecretValueResult;
 import lombok.AllArgsConstructor;
 import lombok.Builder;
 import lombok.Data;
@@ -16,6 +17,6 @@ import lombok.NoArgsConstructor;
 @NoArgsConstructor
 @Data
 public class GetSecretResponse {
-    byte[] secret;
-    byte[] error;
+    GetSecretValueResult secret;
+    GetSecretValueError error;
 }

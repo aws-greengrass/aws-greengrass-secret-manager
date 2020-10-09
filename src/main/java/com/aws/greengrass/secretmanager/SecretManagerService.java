@@ -37,7 +37,6 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.dataformat.cbor.databind.CBORMapper;
 
 import java.io.IOException;
-import java.nio.charset.StandardCharsets;
 import java.util.Arrays;
 import java.util.EnumMap;
 import java.util.HashSet;
@@ -168,8 +167,7 @@ public class SecretManagerService extends PluginService {
                     getSecretValueRequest.getSecretId());
             logger.atInfo().event("secret-access").kv("Principal", serviceName)
                     .kv("secret", getSecretValueRequest.getSecretId()).log("requested secret");
-            return GetSecretResponse.builder()
-                    .secret(CBOR_MAPPER.writeValueAsBytes(secretManager.getSecret(getSecretValueRequest))).build();
+            return GetSecretResponse.builder().secret(secretManager.getSecret(getSecretValueRequest)).build();
         } catch (GetSecretException t) {
             status = t.getStatus();
             message = t.getMessage();
@@ -183,13 +181,8 @@ public class SecretManagerService extends PluginService {
             status = 500;
             message = t.getMessage();
         }
-        try {
-            return GetSecretResponse.builder().error(CBOR_MAPPER
-                    .writeValueAsBytes(GetSecretValueError.builder().status(status).message(message).build())).build();
-        } catch (IOException e) {
-            logger.atError("secret-error").setCause(e).log("Failed to send error response");
-        }
-        return GetSecretResponse.builder().error("Internal Error".getBytes(StandardCharsets.UTF_8)).build();
+        return GetSecretResponse.builder().error(GetSecretValueError.builder().status(status).message(message)
+                .build()).build();
     }
 
     /**
