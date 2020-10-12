@@ -35,6 +35,10 @@ import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.MapperFeature;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.dataformat.cbor.databind.CBORMapper;
+import generated.software.amazon.awssdk.iot.greengrass.model.GetSecretValueResponse;
+import generated.software.amazon.awssdk.iot.greengrass.model.ResourceNotFoundError;
+import generated.software.amazon.awssdk.iot.greengrass.model.ServiceError;
+import generated.software.amazon.awssdk.iot.greengrass.model.UnauthorizedError;
 
 import java.io.IOException;
 import java.util.Arrays;
@@ -183,6 +187,39 @@ public class SecretManagerService extends PluginService {
         }
         return GetSecretResponse.builder().error(GetSecretValueError.builder().status(status).message(message)
                 .build()).build();
+    }
+
+    /**
+     * Handles secret API calls from new IPC.
+     *
+     * @param request     get secret request from IPC API
+     * @param serviceName component name of the request
+     * @return get secret response for IPC API
+     * @throws UnauthorizedError     if secret access is not authorized
+     * @throws ResourceNotFoundError if requested secret is not found locally
+     * @throws ServiceError          if kernel encountered errors while processing this request
+     */
+    public GetSecretValueResponse handleIPCRequest(
+            generated.software.amazon.awssdk.iot.greengrass.model.GetSecretValueRequest request, String serviceName) {
+        try {
+            doAuthorization(sdkToAuthCode.get(SecretClientOpCodes.GET_SECRET), serviceName, request.getSecretId());
+            logger.atInfo().event("secret-access").kv("Principal", serviceName).kv("secret", request.getSecretId())
+                    .log("requested secret");
+            return secretManager.getSecret(request);
+        } catch (AuthorizationException e) {
+            throw new UnauthorizedError(e.getMessage());
+        } catch (GetSecretException e) {
+            if (e.getStatus() == 404) {
+                ResourceNotFoundError rnf = new ResourceNotFoundError();
+                rnf.setMessage(e.getMessage());
+                rnf.setResourceType("secret");
+                throw new ResourceNotFoundError();
+            }
+            throw new ServiceError(e.getMessage());
+        } catch (Exception e) {
+            logger.atError("Internal error");
+            throw new ServiceError(e.getMessage());
+        }
     }
 
     /**

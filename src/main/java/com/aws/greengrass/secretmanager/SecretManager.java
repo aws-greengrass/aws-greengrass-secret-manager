@@ -21,6 +21,7 @@ import com.aws.greengrass.secretmanager.model.AWSSecretResponse;
 import com.aws.greengrass.secretmanager.model.SecretConfiguration;
 import com.aws.greengrass.secretmanager.model.SecretDocument;
 import com.aws.greengrass.util.Utils;
+import generated.software.amazon.awssdk.iot.greengrass.model.SecretValue;
 import software.amazon.awssdk.core.SdkBytes;
 import software.amazon.awssdk.services.secretsmanager.model.GetSecretValueRequest;
 import software.amazon.awssdk.services.secretsmanager.model.GetSecretValueResponse;
@@ -302,6 +303,21 @@ public class SecretManager {
     }
 
     /**
+     * Get a secret for new IPC. Secrets are stored in memory and only loaded from disk on reload or when synced from
+     * cloud.
+     * @param request IPC request from kernel to get secret
+     * @return secret IPC response containing secret and metadata
+     * @throws GetSecretException when there is any issue accessing secret
+     */
+    public generated.software.amazon.awssdk.iot.greengrass.model.GetSecretValueResponse
+    getSecret(generated.software.amazon.awssdk.iot.greengrass.model.GetSecretValueRequest request)
+            throws GetSecretException {
+            GetSecretValueResponse secretResponse = getSecret(request.getSecretId(), request.getVersionId(),
+                    request.getVersionStage());
+            return translateModeltoNewIpc(secretResponse);
+    }
+
+    /**
      * Return secret arn given secretId. If secret name is provided, then return its mapped arn.
      *
      * @param secretId secret name or arn
@@ -371,5 +387,22 @@ public class SecretManager {
                 .versionStages(response.versionStages())
                 .responseStatus(SecretResponseStatus.Success)
                 .build();
+    }
+
+    private generated.software.amazon.awssdk.iot.greengrass.model.GetSecretValueResponse
+    translateModeltoNewIpc(GetSecretValueResponse response) {
+        generated.software.amazon.awssdk.iot.greengrass.model.GetSecretValueResponse ipcResponse =
+                new generated.software.amazon.awssdk.iot.greengrass.model.GetSecretValueResponse();
+        SecretValue secretValue = new SecretValue();
+        if (response.secretBinary() != null) {
+            secretValue.setSecretBinary(response.secretBinary().asByteArray());
+        } else {
+            secretValue.setSecretString(response.secretString());
+        }
+        ipcResponse.setSecretId(response.arn());
+        ipcResponse.setSecretValue(secretValue);
+        ipcResponse.setVersionId(response.versionId());
+        ipcResponse.setVersionStage(response.versionStages());
+        return ipcResponse;
     }
 }
