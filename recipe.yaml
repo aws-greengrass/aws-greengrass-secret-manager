@@ -11,5 +11,12 @@ ComponentConfiguration:
 Manifests:
   - Platform:
       os: linux
+    Parameters:
+      - Name: cloudSecrets
+        Value: '[]'
+        Type: STRING
+      - Name: accessControl
+        Value: '[]'
+        Type: STRING
     Artifacts:
       - URI: s3://gg-dev-artifacts-$stage/$componentName/$platform.os/$version/aws.greengrass.SecretManager.jar
