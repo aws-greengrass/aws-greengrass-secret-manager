@@ -15,6 +15,7 @@ import com.aws.greengrass.dependency.ImplementsService;
 import com.aws.greengrass.dependency.State;
 import com.aws.greengrass.ipc.ConnectionContext;
 import com.aws.greengrass.ipc.IPCRouter;
+import com.aws.greengrass.ipc.Startable;
 import com.aws.greengrass.ipc.common.BuiltInServiceDestinationCode;
 import com.aws.greengrass.ipc.common.FrameReader;
 import com.aws.greengrass.ipc.exceptions.IPCException;
@@ -35,6 +36,7 @@ import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.MapperFeature;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.dataformat.cbor.databind.CBORMapper;
+import generated.software.amazon.awssdk.iot.greengrass.GreengrassCoreIPCService;
 import generated.software.amazon.awssdk.iot.greengrass.model.GetSecretValueResponse;
 import generated.software.amazon.awssdk.iot.greengrass.model.ResourceNotFoundError;
 import generated.software.amazon.awssdk.iot.greengrass.model.ServiceError;
@@ -53,7 +55,7 @@ import javax.inject.Inject;
 import static com.aws.greengrass.componentmanager.KernelConfigResolver.CONFIGURATION_CONFIG_KEY;
 
 @ImplementsService(name = SecretManagerService.SECRET_MANAGER_SERVICE_NAME)
-public class SecretManagerService extends PluginService {
+public class SecretManagerService extends PluginService implements Startable {
 
     public static final String SECRET_MANAGER_SERVICE_NAME = "aws.greengrass.SecretManager";
     public static final String SECRETS_TOPIC = "cloudSecrets";
@@ -66,6 +68,12 @@ public class SecretManagerService extends PluginService {
     private final SecretManager secretManager;
     private final IPCRouter router;
     private AuthorizationHandler authorizationHandler;
+
+    @Inject
+    SecretManagerIPCAgent secretManagerIPCAgent;
+
+    @Inject
+    private GreengrassCoreIPCService greengrassCoreIPCService;
 
     static {
         sdkToAuthCode = new EnumMap<>(SecretClientOpCodes.class);
@@ -136,7 +144,9 @@ public class SecretManagerService extends PluginService {
     }
 
     @Override
-    protected void startup() {
+    public void startup() {
+        greengrassCoreIPCService.setGetSecretValueHandler(
+                context -> secretManagerIPCAgent.getSecretValueOperationHandler(context));
         // TODO: Modify secret service to only provide interface to deal with downloaded
         // secrets during download phase.
 
