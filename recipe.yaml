@@ -4,14 +4,14 @@ ComponentName: aws.greengrass.SecretManager
 ComponentDescription: AWS Greengrass Secret Manager
 ComponentPublisher: AWS
 ComponentVersion: '0.0.0'
+ComponentConfiguration:
+  DefaultConfiguration:
+    cloudSecrets: '[]'
 Manifests:
   - Platform:
       os: linux
     Parameters:
       - Name: cloudSecrets
-        Value: '[]'
-        Type: STRING
-      - Name: accessControl
         Value: '[]'
         Type: STRING
     Artifacts:

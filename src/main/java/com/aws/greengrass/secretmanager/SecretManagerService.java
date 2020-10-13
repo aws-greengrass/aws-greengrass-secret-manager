@@ -50,7 +50,7 @@ import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.Future;
 import javax.inject.Inject;
 
-import static com.aws.greengrass.componentmanager.KernelConfigResolver.PARAMETERS_CONFIG_KEY;
+import static com.aws.greengrass.componentmanager.KernelConfigResolver.CONFIGURATION_CONFIG_KEY;
 
 @ImplementsService(name = SecretManagerService.SECRET_MANAGER_SERVICE_NAME)
 public class SecretManagerService extends PluginService {
@@ -89,7 +89,7 @@ public class SecretManagerService extends PluginService {
         this.secretManager = secretManager;
         this.authorizationHandler = authorizationHandler;
         // TODO: Subscribe on thing key updates
-        topics.lookup(PARAMETERS_CONFIG_KEY, SECRETS_TOPIC)
+        topics.lookup(CONFIGURATION_CONFIG_KEY, SECRETS_TOPIC)
                 .subscribe(this::serviceChanged);
     }
 
