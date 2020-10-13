@@ -7,15 +7,11 @@ ComponentVersion: '0.0.0'
 ComponentConfiguration:
   DefaultConfiguration:
     cloudSecrets: '[]'
-    accessControl: '[]'
 Manifests:
   - Platform:
       os: linux
     Parameters:
       - Name: cloudSecrets
-        Value: '[]'
-        Type: STRING
-      - Name: accessControl
         Value: '[]'
         Type: STRING
     Artifacts:
