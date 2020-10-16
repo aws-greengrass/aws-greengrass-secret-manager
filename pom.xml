@@ -9,14 +9,14 @@
          xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/xsd/maven-4.0.0.xsd">
     <modelVersion>4.0.0</modelVersion>
 
-    <groupId>com.aws.iot</groupId>
-    <artifactId>greengrass-secret-manager</artifactId>
+    <groupId>com.aws.greengrass</groupId>
+    <artifactId>secretmanager</artifactId>
     <packaging>jar</packaging>
     <version>1.0-SNAPSHOT</version>
     <repositories>
         <repository>
-            <id>evergreen-dev-snapshot</id>
-            <name>Kernel Snapshot</name>
+            <id>greengrass-dev-snapshot</id>
+            <name>Dev Snapshot</name>
             <url>https://d10d248laylpoq.cloudfront.net</url>
         </repository>
     </repositories>
@@ -208,8 +208,8 @@
     </build>
     <distributionManagement>
         <snapshotRepository>
-            <id>evergreen-dev-snapshot</id>
-            <name>Evergreen Dev Snapshot</name>
+            <id>greengrass-dev-snapshot</id>
+            <name>greengrass Dev Snapshot</name>
             <url>${stargate-snapshot-repository-url}</url>
         </snapshotRepository>
     </distributionManagement>
@@ -223,8 +223,8 @@
     </properties>
     <dependencies>
         <dependency>
-            <groupId>com.aws.iot</groupId>
-            <artifactId>evergreen-kernel</artifactId>
+            <groupId>com.aws.greengrass</groupId>
+            <artifactId>nucleus</artifactId>
             <version>1.0-SNAPSHOT</version>
             <scope>provided</scope>
         </dependency>
@@ -257,8 +257,8 @@
             <scope>test</scope>
         </dependency>
         <dependency>
-            <groupId>com.aws.iot</groupId>
-            <artifactId>evergreen-kernel</artifactId>
+            <groupId>com.aws.greengrass</groupId>
+            <artifactId>nucleus</artifactId>
             <version>1.0-SNAPSHOT</version>
             <type>test-jar</type>
             <scope>test</scope>
