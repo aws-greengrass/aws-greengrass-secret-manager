@@ -36,11 +36,11 @@ import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.MapperFeature;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.dataformat.cbor.databind.CBORMapper;
-import generated.software.amazon.awssdk.iot.greengrass.GreengrassCoreIPCService;
-import generated.software.amazon.awssdk.iot.greengrass.model.GetSecretValueResponse;
-import generated.software.amazon.awssdk.iot.greengrass.model.ResourceNotFoundError;
-import generated.software.amazon.awssdk.iot.greengrass.model.ServiceError;
-import generated.software.amazon.awssdk.iot.greengrass.model.UnauthorizedError;
+import software.amazon.awssdk.aws.greengrass.GreengrassCoreIPCService;
+import software.amazon.awssdk.aws.greengrass.model.GetSecretValueResponse;
+import software.amazon.awssdk.aws.greengrass.model.ResourceNotFoundError;
+import software.amazon.awssdk.aws.greengrass.model.ServiceError;
+import software.amazon.awssdk.aws.greengrass.model.UnauthorizedError;
 
 import java.io.IOException;
 import java.util.Arrays;
@@ -210,7 +210,7 @@ public class SecretManagerService extends PluginService implements Startable {
      * @throws ServiceError          if kernel encountered errors while processing this request
      */
     public GetSecretValueResponse handleIPCRequest(
-            generated.software.amazon.awssdk.iot.greengrass.model.GetSecretValueRequest request, String serviceName) {
+            software.amazon.awssdk.aws.greengrass.model.GetSecretValueRequest request, String serviceName) {
         try {
             doAuthorization(sdkToAuthCode.get(SecretClientOpCodes.GET_SECRET), serviceName, request.getSecretId());
             logger.atInfo().event("secret-access").kv("Principal", serviceName).kv("secret", request.getSecretId())
@@ -225,9 +225,6 @@ public class SecretManagerService extends PluginService implements Startable {
                 rnf.setResourceType("secret");
                 throw new ResourceNotFoundError();
             }
-            throw new ServiceError(e.getMessage());
-        } catch (Exception e) {
-            logger.atError("Internal error");
             throw new ServiceError(e.getMessage());
         }
     }

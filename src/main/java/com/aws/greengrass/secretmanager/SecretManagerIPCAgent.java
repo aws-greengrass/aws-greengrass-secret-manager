@@ -5,15 +5,13 @@
 
 package com.aws.greengrass.secretmanager;
 
-import com.aws.greengrass.logging.api.Logger;
-import com.aws.greengrass.logging.impl.LogManager;
-import generated.software.amazon.awssdk.iot.greengrass.GeneratedAbstractGetSecretValueOperationHandler;
-import generated.software.amazon.awssdk.iot.greengrass.model.GetSecretValueRequest;
-import generated.software.amazon.awssdk.iot.greengrass.model.GetSecretValueResponse;
+import software.amazon.awssdk.aws.greengrass.GeneratedAbstractGetSecretValueOperationHandler;
+import software.amazon.awssdk.aws.greengrass.model.GetSecretValueRequest;
+import software.amazon.awssdk.aws.greengrass.model.GetSecretValueResponse;
 import lombok.AccessLevel;
 import lombok.Setter;
-import software.amazon.eventstream.iot.EventStreamableJsonMessage;
-import software.amazon.eventstream.iot.server.OperationContinuationHandlerContext;
+import software.amazon.awssdk.eventstreamrpc.OperationContinuationHandlerContext;
+import software.amazon.awssdk.eventstreamrpc.model.EventStreamJsonMessage;
 
 import javax.inject.Inject;
 
@@ -21,8 +19,6 @@ import javax.inject.Inject;
  * Class to handle business logic for all SecretManager requests over IPC.
  */
 public class SecretManagerIPCAgent {
-
-    private static final Logger logger = LogManager.getLogger(SecretManagerIPCAgent.class);
 
     @Inject
     @Setter(AccessLevel.PACKAGE)
@@ -51,8 +47,9 @@ public class SecretManagerIPCAgent {
         }
 
         @Override
-        public void handleStreamEvent(EventStreamableJsonMessage streamRequestEvent) {
+        public void handleStreamEvent(EventStreamJsonMessage streamRequestEvent) {
 
         }
+
     }
 }

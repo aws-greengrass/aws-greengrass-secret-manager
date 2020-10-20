@@ -6,9 +6,9 @@
 package com.aws.greengrass.secretmanager;
 
 import com.aws.greengrass.testcommons.testutilities.GGExtension;
-import generated.software.amazon.awssdk.iot.greengrass.model.GetSecretValueRequest;
-import generated.software.amazon.awssdk.iot.greengrass.model.GetSecretValueResponse;
-import generated.software.amazon.awssdk.iot.greengrass.model.SecretValue;
+import software.amazon.awssdk.aws.greengrass.model.GetSecretValueRequest;
+import software.amazon.awssdk.aws.greengrass.model.GetSecretValueResponse;
+import software.amazon.awssdk.aws.greengrass.model.SecretValue;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -17,8 +17,8 @@ import org.mockito.Captor;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import software.amazon.awssdk.crt.eventstream.ServerConnectionContinuation;
-import software.amazon.eventstream.iot.server.AuthenticationData;
-import software.amazon.eventstream.iot.server.OperationContinuationHandlerContext;
+import software.amazon.awssdk.eventstreamrpc.AuthenticationData;
+import software.amazon.awssdk.eventstreamrpc.OperationContinuationHandlerContext;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.mockito.ArgumentMatchers.any;

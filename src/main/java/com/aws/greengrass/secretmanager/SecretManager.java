@@ -21,7 +21,7 @@ import com.aws.greengrass.secretmanager.model.AWSSecretResponse;
 import com.aws.greengrass.secretmanager.model.SecretConfiguration;
 import com.aws.greengrass.secretmanager.model.SecretDocument;
 import com.aws.greengrass.util.Utils;
-import generated.software.amazon.awssdk.iot.greengrass.model.SecretValue;
+import software.amazon.awssdk.aws.greengrass.model.SecretValue;
 import software.amazon.awssdk.core.SdkBytes;
 import software.amazon.awssdk.services.secretsmanager.model.GetSecretValueRequest;
 import software.amazon.awssdk.services.secretsmanager.model.GetSecretValueResponse;
@@ -309,8 +309,8 @@ public class SecretManager {
      * @return secret IPC response containing secret and metadata
      * @throws GetSecretException when there is any issue accessing secret
      */
-    public generated.software.amazon.awssdk.iot.greengrass.model.GetSecretValueResponse
-    getSecret(generated.software.amazon.awssdk.iot.greengrass.model.GetSecretValueRequest request)
+    public software.amazon.awssdk.aws.greengrass.model.GetSecretValueResponse
+    getSecret(software.amazon.awssdk.aws.greengrass.model.GetSecretValueRequest request)
             throws GetSecretException {
             GetSecretValueResponse secretResponse = getSecret(request.getSecretId(), request.getVersionId(),
                     request.getVersionStage());
@@ -389,10 +389,10 @@ public class SecretManager {
                 .build();
     }
 
-    private generated.software.amazon.awssdk.iot.greengrass.model.GetSecretValueResponse translateModeltoIpc(
+    private software.amazon.awssdk.aws.greengrass.model.GetSecretValueResponse translateModeltoIpc(
             GetSecretValueResponse response) {
-        generated.software.amazon.awssdk.iot.greengrass.model.GetSecretValueResponse ipcResponse =
-                new generated.software.amazon.awssdk.iot.greengrass.model.GetSecretValueResponse();
+        software.amazon.awssdk.aws.greengrass.model.GetSecretValueResponse ipcResponse =
+                new software.amazon.awssdk.aws.greengrass.model.GetSecretValueResponse();
         SecretValue secretValue = new SecretValue();
         if (response.secretBinary() != null) {
             secretValue.setSecretBinary(response.secretBinary().asByteArray());

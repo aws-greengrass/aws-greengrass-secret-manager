@@ -25,11 +25,11 @@ import com.aws.greengrass.secretmanager.model.GetSecretResponse;
 import com.aws.greengrass.testcommons.testutilities.GGExtension;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.dataformat.cbor.databind.CBORMapper;
-import generated.software.amazon.awssdk.iot.greengrass.model.GetSecretValueResponse;
-import generated.software.amazon.awssdk.iot.greengrass.model.ResourceNotFoundError;
-import generated.software.amazon.awssdk.iot.greengrass.model.SecretValue;
-import generated.software.amazon.awssdk.iot.greengrass.model.ServiceError;
-import generated.software.amazon.awssdk.iot.greengrass.model.UnauthorizedError;
+import software.amazon.awssdk.aws.greengrass.model.GetSecretValueResponse;
+import software.amazon.awssdk.aws.greengrass.model.ResourceNotFoundError;
+import software.amazon.awssdk.aws.greengrass.model.SecretValue;
+import software.amazon.awssdk.aws.greengrass.model.ServiceError;
+import software.amazon.awssdk.aws.greengrass.model.UnauthorizedError;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -427,12 +427,12 @@ public class SecretManagerServiceTest {
         response.setSecretId(SECRET_ID);
         response.setVersionId(VERSION_ID);
         response.setVersionStage(Arrays.asList(CURRENT_LABEL, VERSION_LABEL));
-        generated.software.amazon.awssdk.iot.greengrass.model.GetSecretValueRequest
-                request = new generated.software.amazon.awssdk.iot.greengrass.model.GetSecretValueRequest();
+        software.amazon.awssdk.aws.greengrass.model.GetSecretValueRequest
+                request = new software.amazon.awssdk.aws.greengrass.model.GetSecretValueRequest();
         request.setSecretId(SECRET_ID);
         request.setVersionId(VERSION_ID);
 
-        when(mockSecretManager.getSecret(any(generated.software.amazon.awssdk.iot.greengrass.model.GetSecretValueRequest.class))).thenReturn(response);
+        when(mockSecretManager.getSecret(any(software.amazon.awssdk.aws.greengrass.model.GetSecretValueRequest.class))).thenReturn(response);
         when(mockAuthorizationHandler.isAuthorized(stringCaptor.capture(), permissionCaptor.capture()))
                 .thenReturn(true);
 
@@ -451,8 +451,8 @@ public class SecretManagerServiceTest {
     void GIVEN_secret_service_WHEN_ipc_request_unauthorized_THEN_throws_unauthorized_exception() throws Exception {
         startKernelWithConfig("config.yaml", State.RUNNING);
         final String serviceName = "mockService";
-        generated.software.amazon.awssdk.iot.greengrass.model.GetSecretValueRequest request =
-                new generated.software.amazon.awssdk.iot.greengrass.model.GetSecretValueRequest();
+        software.amazon.awssdk.aws.greengrass.model.GetSecretValueRequest request =
+                new software.amazon.awssdk.aws.greengrass.model.GetSecretValueRequest();
         request.setSecretId(SECRET_ID);
         request.setVersionId(VERSION_ID);
         when(mockAuthorizationHandler.isAuthorized(any(), any(Permission.class))).thenThrow(AuthorizationException.class);
@@ -466,17 +466,17 @@ public class SecretManagerServiceTest {
             throws Exception {
         startKernelWithConfig("config.yaml", State.RUNNING);
         final String serviceName = "mockService";
-        generated.software.amazon.awssdk.iot.greengrass.model.GetSecretValueRequest request =
-                new generated.software.amazon.awssdk.iot.greengrass.model.GetSecretValueRequest();
+        software.amazon.awssdk.aws.greengrass.model.GetSecretValueRequest request =
+                new software.amazon.awssdk.aws.greengrass.model.GetSecretValueRequest();
         request.setSecretId(SECRET_ID);
         request.setVersionId(VERSION_ID);
 
-        when(mockSecretManager.getSecret(any(generated.software.amazon.awssdk.iot.greengrass.model.GetSecretValueRequest.class)))
+        when(mockSecretManager.getSecret(any(software.amazon.awssdk.aws.greengrass.model.GetSecretValueRequest.class)))
                 .thenThrow(new GetSecretException(400, "getSecret Error"));
         assertThrows(ServiceError.class,
                 () -> kernel.getContext().get(SecretManagerService.class).handleIPCRequest(request, serviceName));
 
-        when(mockSecretManager.getSecret(any(generated.software.amazon.awssdk.iot.greengrass.model.GetSecretValueRequest.class)))
+        when(mockSecretManager.getSecret(any(software.amazon.awssdk.aws.greengrass.model.GetSecretValueRequest.class)))
                 .thenThrow(new GetSecretException(404, "secretNotFoundErr"));
         assertThrows(ResourceNotFoundError.class,
                 () -> kernel.getContext().get(SecretManagerService.class).handleIPCRequest(request, serviceName));
