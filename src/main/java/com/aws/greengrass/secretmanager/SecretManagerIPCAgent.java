@@ -5,11 +5,11 @@
 
 package com.aws.greengrass.secretmanager;
 
+import lombok.AccessLevel;
+import lombok.Setter;
 import software.amazon.awssdk.aws.greengrass.GeneratedAbstractGetSecretValueOperationHandler;
 import software.amazon.awssdk.aws.greengrass.model.GetSecretValueRequest;
 import software.amazon.awssdk.aws.greengrass.model.GetSecretValueResponse;
-import lombok.AccessLevel;
-import lombok.Setter;
 import software.amazon.awssdk.eventstreamrpc.OperationContinuationHandlerContext;
 import software.amazon.awssdk.eventstreamrpc.model.EventStreamJsonMessage;
 

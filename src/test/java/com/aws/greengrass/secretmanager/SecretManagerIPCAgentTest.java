@@ -6,9 +6,6 @@
 package com.aws.greengrass.secretmanager;
 
 import com.aws.greengrass.testcommons.testutilities.GGExtension;
-import software.amazon.awssdk.aws.greengrass.model.GetSecretValueRequest;
-import software.amazon.awssdk.aws.greengrass.model.GetSecretValueResponse;
-import software.amazon.awssdk.aws.greengrass.model.SecretValue;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -16,6 +13,9 @@ import org.mockito.ArgumentCaptor;
 import org.mockito.Captor;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
+import software.amazon.awssdk.aws.greengrass.model.GetSecretValueRequest;
+import software.amazon.awssdk.aws.greengrass.model.GetSecretValueResponse;
+import software.amazon.awssdk.aws.greengrass.model.SecretValue;
 import software.amazon.awssdk.crt.eventstream.ServerConnectionContinuation;
 import software.amazon.awssdk.eventstreamrpc.AuthenticationData;
 import software.amazon.awssdk.eventstreamrpc.OperationContinuationHandlerContext;
