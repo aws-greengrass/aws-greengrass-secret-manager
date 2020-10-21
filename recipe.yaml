@@ -9,9 +9,7 @@ ComponentConfiguration:
   DefaultConfiguration:
     cloudSecrets: '[]'
 Manifests:
-  - Platform:
-      os: linux
-    Parameters:
+  - Parameters:
       - Name: cloudSecrets
         Value: '[]'
         Type: STRING
