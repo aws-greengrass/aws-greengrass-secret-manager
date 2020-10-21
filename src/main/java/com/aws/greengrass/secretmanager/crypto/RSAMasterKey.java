@@ -13,7 +13,6 @@ import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
 import java.security.PrivateKey;
 import java.security.PublicKey;
-import java.util.UUID;
 
 public class RSAMasterKey implements MasterKey {
     // Metadata used by JCEMasterKey, so that another instance of JCEMasterKey cannot be used
