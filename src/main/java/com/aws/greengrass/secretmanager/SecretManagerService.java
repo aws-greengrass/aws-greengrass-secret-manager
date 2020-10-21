@@ -55,7 +55,7 @@ import javax.inject.Inject;
 import static com.aws.greengrass.componentmanager.KernelConfigResolver.CONFIGURATION_CONFIG_KEY;
 
 @ImplementsService(name = SecretManagerService.SECRET_MANAGER_SERVICE_NAME)
-public class SecretManagerService extends PluginService implements Startable {
+public class SecretManagerService extends PluginService {
 
     public static final String SECRET_MANAGER_SERVICE_NAME = "aws.greengrass.SecretManager";
     public static final String SECRETS_TOPIC = "cloudSecrets";
