@@ -53,7 +53,7 @@ public class SecretManager {
     public static final String VALID_SECRET_ARN_PATTERN =
             "arn:aws:secretsmanager:[a-z0-9\\-]+:[0-9]{12}:secret:([a-zA-Z0-9\\\\]+/)*"
                     + "[a-zA-Z0-9/_+=,.@\\-]+-[a-zA-Z0-9]+";
-    private final String secretNotFoundErr = "Secret not found ";
+    private static final String secretNotFoundErr = "Secret not found ";
     private final Logger logger = LogManager.getLogger(SecretManager.class);
     // Cache which holds aws secrets result
     private ConcurrentHashMap<String, GetSecretValueResponse> cache = new ConcurrentHashMap<>();
