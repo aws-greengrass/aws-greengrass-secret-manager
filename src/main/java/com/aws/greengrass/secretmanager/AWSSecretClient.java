@@ -6,15 +6,13 @@
 package com.aws.greengrass.secretmanager;
 
 import com.aws.greengrass.deployment.DeviceConfiguration;
-import com.aws.greengrass.deployment.exceptions.AWSIotException;
-import com.aws.greengrass.iot.model.IotCloudResponse;
 import com.aws.greengrass.secretmanager.exception.SecretManagerException;
 import com.aws.greengrass.tes.LazyCredentialProvider;
 import com.aws.greengrass.util.BaseRetryableAccessor;
 import com.aws.greengrass.util.Coerce;
 import com.aws.greengrass.util.CrashableSupplier;
+import com.aws.greengrass.util.ProxyUtils;
 import com.aws.greengrass.util.Utils;
-import software.amazon.awssdk.crt.http.HttpClientConnection;
 import software.amazon.awssdk.regions.Region;
 import software.amazon.awssdk.services.secretsmanager.SecretsManagerClient;
 import software.amazon.awssdk.services.secretsmanager.model.DecryptionFailureException;
@@ -26,7 +24,6 @@ import software.amazon.awssdk.services.secretsmanager.model.InvalidRequestExcept
 import software.amazon.awssdk.services.secretsmanager.model.ResourceNotFoundException;
 
 import java.io.IOException;
-import java.util.Arrays;
 import java.util.Collections;
 import java.util.HashSet;
 import javax.inject.Inject;
@@ -45,8 +42,8 @@ public class AWSSecretClient {
     @Inject
     public AWSSecretClient(LazyCredentialProvider credentialProvider, DeviceConfiguration deviceConfiguration) {
         Region region = Region.of(Coerce.toString(deviceConfiguration.getAWSRegion()));
-        this.secretsManagerClient = SecretsManagerClient.builder().credentialsProvider(credentialProvider)
-                .region(region).build();
+        this.secretsManagerClient = SecretsManagerClient.builder().httpClient(ProxyUtils.getSdkHttpClient())
+                .credentialsProvider(credentialProvider).region(region).build();
     }
 
     // Constructor used for testing.
