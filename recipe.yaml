@@ -4,6 +4,7 @@ ComponentName: aws.greengrass.SecretManager
 ComponentDescription: AWS Greengrass Secret Manager
 ComponentPublisher: AWS
 ComponentVersion: '0.0.0'
+ComponentType: 'aws.greengrass.plugin'
 ComponentConfiguration:
   DefaultConfiguration:
     cloudSecrets: '[]'
