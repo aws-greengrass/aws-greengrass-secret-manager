@@ -93,7 +93,6 @@ public class SecretManagerService extends PluginService {
             logger.atInfo().kv("service", SECRET_MANAGER_SERVICE_NAME).log("No secrets configured");
             return;
         }
-        logger.atError().log("POJO " + secretParam.toPOJO());
         try {
             List<SecretConfiguration> configuredSecrets = OBJECT_MAPPER.convertValue(secretParam.toPOJO(),
                     new TypeReference<List<SecretConfiguration>>(){});
