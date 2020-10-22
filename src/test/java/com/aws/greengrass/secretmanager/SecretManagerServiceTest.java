@@ -34,6 +34,11 @@ import org.mockito.ArgumentCaptor;
 import org.mockito.Captor;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
+import software.amazon.awssdk.aws.greengrass.model.GetSecretValueResponse;
+import software.amazon.awssdk.aws.greengrass.model.ResourceNotFoundError;
+import software.amazon.awssdk.aws.greengrass.model.SecretValue;
+import software.amazon.awssdk.aws.greengrass.model.ServiceError;
+import software.amazon.awssdk.aws.greengrass.model.UnauthorizedError;
 
 import java.io.IOException;
 import java.nio.file.Path;
@@ -51,6 +56,7 @@ import static org.hamcrest.Matchers.containsString;
 import static org.hamcrest.Matchers.hasItem;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNull;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.atLeastOnce;
@@ -407,6 +413,73 @@ public class SecretManagerServiceTest {
         com.aws.greengrass.ipc.services.secret.GetSecretValueResult returnedResult =
                 IPCUtil.decode(ApplicationMessage.fromBytes(m.getPayload()).getPayload(), GetSecretValueResult.class);
         assertEquals(SecretResponseStatus.InternalError, returnedResult.getStatus());
+    }
+
+    @Test
+    void GIVEN_secret_service_WHEN_ipc_handler_called_THEN_correct_response_returned() throws Exception {
+        startKernelWithConfig("config.yaml", State.RUNNING);
+        final String secretString = "secretValue";
+        final String serviceName = "mockService";
+        GetSecretValueResponse response = new GetSecretValueResponse();
+        SecretValue secretValue = new SecretValue();
+        secretValue.setSecretString(secretString);
+        response.setSecretValue(secretValue);
+        response.setSecretId(SECRET_ID);
+        response.setVersionId(VERSION_ID);
+        response.setVersionStage(Arrays.asList(CURRENT_LABEL, VERSION_LABEL));
+        software.amazon.awssdk.aws.greengrass.model.GetSecretValueRequest
+                request = new software.amazon.awssdk.aws.greengrass.model.GetSecretValueRequest();
+        request.setSecretId(SECRET_ID);
+        request.setVersionId(VERSION_ID);
+
+        when(mockSecretManager.getSecret(any(software.amazon.awssdk.aws.greengrass.model.GetSecretValueRequest.class))).thenReturn(response);
+        when(mockAuthorizationHandler.isAuthorized(stringCaptor.capture(), permissionCaptor.capture()))
+                .thenReturn(true);
+
+        GetSecretValueResponse returnedResponse =
+                kernel.getContext().get(SecretManagerService.class).handleIPCRequest(request, serviceName);
+        assertEquals(response, returnedResponse);
+        assertEquals(SecretManagerService.SECRET_MANAGER_SERVICE_NAME, stringCaptor.getValue());
+        assertEquals(SecretManagerService.SECRETS_AUTHORIZATION_OPCODE, permissionCaptor.getValue().getOperation());
+        assertEquals(serviceName, permissionCaptor.getValue().getPrincipal());
+        assertEquals(SECRET_ID, permissionCaptor.getValue().getResource());
+        verify(mockAuthorizationHandler, atLeastOnce()).registerComponent(SecretManagerService.SECRET_MANAGER_SERVICE_NAME,
+                new HashSet<>(Arrays.asList(SecretManagerService.SECRETS_AUTHORIZATION_OPCODE)));
+    }
+
+    @Test
+    void GIVEN_secret_service_WHEN_ipc_request_unauthorized_THEN_throws_unauthorized_exception() throws Exception {
+        startKernelWithConfig("config.yaml", State.RUNNING);
+        final String serviceName = "mockService";
+        software.amazon.awssdk.aws.greengrass.model.GetSecretValueRequest request =
+                new software.amazon.awssdk.aws.greengrass.model.GetSecretValueRequest();
+        request.setSecretId(SECRET_ID);
+        request.setVersionId(VERSION_ID);
+        when(mockAuthorizationHandler.isAuthorized(any(), any(Permission.class))).thenThrow(AuthorizationException.class);
+
+        assertThrows(UnauthorizedError.class,
+                () -> kernel.getContext().get(SecretManagerService.class).handleIPCRequest(request, serviceName));
+    }
+
+    @Test
+    void GIVEN_secret_service_WHEN_ipc_request_get_secret_errors_THEN_throw_error()
+            throws Exception {
+        startKernelWithConfig("config.yaml", State.RUNNING);
+        final String serviceName = "mockService";
+        software.amazon.awssdk.aws.greengrass.model.GetSecretValueRequest request =
+                new software.amazon.awssdk.aws.greengrass.model.GetSecretValueRequest();
+        request.setSecretId(SECRET_ID);
+        request.setVersionId(VERSION_ID);
+
+        when(mockSecretManager.getSecret(any(software.amazon.awssdk.aws.greengrass.model.GetSecretValueRequest.class)))
+                .thenThrow(new GetSecretException(400, "getSecret Error"));
+        assertThrows(ServiceError.class,
+                () -> kernel.getContext().get(SecretManagerService.class).handleIPCRequest(request, serviceName));
+
+        when(mockSecretManager.getSecret(any(software.amazon.awssdk.aws.greengrass.model.GetSecretValueRequest.class)))
+                .thenThrow(new GetSecretException(404, "secretNotFoundErr"));
+        assertThrows(ResourceNotFoundError.class,
+                () -> kernel.getContext().get(SecretManagerService.class).handleIPCRequest(request, serviceName));
     }
 
 }

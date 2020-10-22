@@ -15,6 +15,7 @@ import com.aws.greengrass.dependency.ImplementsService;
 import com.aws.greengrass.dependency.State;
 import com.aws.greengrass.ipc.ConnectionContext;
 import com.aws.greengrass.ipc.IPCRouter;
+import com.aws.greengrass.ipc.Startable;
 import com.aws.greengrass.ipc.common.BuiltInServiceDestinationCode;
 import com.aws.greengrass.ipc.common.FrameReader;
 import com.aws.greengrass.ipc.exceptions.IPCException;
@@ -35,6 +36,11 @@ import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.MapperFeature;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.dataformat.cbor.databind.CBORMapper;
+import software.amazon.awssdk.aws.greengrass.GreengrassCoreIPCService;
+import software.amazon.awssdk.aws.greengrass.model.GetSecretValueResponse;
+import software.amazon.awssdk.aws.greengrass.model.ResourceNotFoundError;
+import software.amazon.awssdk.aws.greengrass.model.ServiceError;
+import software.amazon.awssdk.aws.greengrass.model.UnauthorizedError;
 
 import java.io.IOException;
 import java.util.Arrays;
@@ -62,6 +68,12 @@ public class SecretManagerService extends PluginService {
     private final SecretManager secretManager;
     private final IPCRouter router;
     private AuthorizationHandler authorizationHandler;
+
+    @Inject
+    SecretManagerIPCAgent secretManagerIPCAgent;
+
+    @Inject
+    private GreengrassCoreIPCService greengrassCoreIPCService;
 
     static {
         sdkToAuthCode = new EnumMap<>(SecretClientOpCodes.class);
@@ -132,7 +144,9 @@ public class SecretManagerService extends PluginService {
     }
 
     @Override
-    protected void startup() {
+    public void startup() {
+        greengrassCoreIPCService.setGetSecretValueHandler(
+                context -> secretManagerIPCAgent.getSecretValueOperationHandler(context));
         // TODO: Modify secret service to only provide interface to deal with downloaded
         // secrets during download phase.
 
@@ -183,6 +197,36 @@ public class SecretManagerService extends PluginService {
         }
         return GetSecretResponse.builder().error(GetSecretValueError.builder().status(status).message(message)
                 .build()).build();
+    }
+
+    /**
+     * Handles secret API calls from new IPC.
+     *
+     * @param request     get secret request from IPC API
+     * @param serviceName component name of the request
+     * @return get secret response for IPC API
+     * @throws UnauthorizedError     if secret access is not authorized
+     * @throws ResourceNotFoundError if requested secret is not found locally
+     * @throws ServiceError          if kernel encountered errors while processing this request
+     */
+    public GetSecretValueResponse handleIPCRequest(
+            software.amazon.awssdk.aws.greengrass.model.GetSecretValueRequest request, String serviceName) {
+        try {
+            doAuthorization(sdkToAuthCode.get(SecretClientOpCodes.GET_SECRET), serviceName, request.getSecretId());
+            logger.atInfo().event("secret-access").kv("Principal", serviceName).kv("secret", request.getSecretId())
+                    .log("requested secret");
+            return secretManager.getSecret(request);
+        } catch (AuthorizationException e) {
+            throw new UnauthorizedError(e.getMessage());
+        } catch (GetSecretException e) {
+            if (e.getStatus() == 404) {
+                ResourceNotFoundError rnf = new ResourceNotFoundError();
+                rnf.setMessage(e.getMessage());
+                rnf.setResourceType("secret");
+                throw new ResourceNotFoundError();
+            }
+            throw new ServiceError(e.getMessage());
+        }
     }
 
     /**
