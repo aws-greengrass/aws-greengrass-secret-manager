@@ -133,7 +133,7 @@ public class SecretManagerServiceTest {
 
     @Test
     void GIVEN_secret_service_WHEN_started_with_bad_parameter_config_THEN_starts_successfully(ExtensionContext context) throws InterruptedException {
-        ignoreExceptionOfType(context, com.fasterxml.jackson.core.JsonParseException.class);
+        ignoreExceptionOfType(context, java.lang.IllegalArgumentException.class);
         startKernelWithConfig("badConfig.yaml", State.RUNNING);
     }
 
@@ -147,7 +147,6 @@ public class SecretManagerServiceTest {
 
     @Test
     void GIVEN_secret_service_WHEN_started_without_secrets_THEN_starts_successfully(ExtensionContext context) throws InterruptedException {
-        ignoreExceptionOfType(context, com.fasterxml.jackson.core.JsonParseException.class);
         startKernelWithConfig("emptyParameterConfig.yaml", State.RUNNING);
     }
 

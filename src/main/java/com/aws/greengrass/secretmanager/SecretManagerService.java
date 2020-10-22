@@ -30,7 +30,6 @@ import com.aws.greengrass.secretmanager.exception.v1.GetSecretException;
 import com.aws.greengrass.secretmanager.model.GetSecretResponse;
 import com.aws.greengrass.secretmanager.model.SecretConfiguration;
 import com.aws.greengrass.secretmanager.model.v1.GetSecretValueError;
-import com.aws.greengrass.util.Coerce;
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.MapperFeature;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -100,18 +99,18 @@ public class SecretManagerService extends PluginService {
                 .subscribe(this::serviceChanged);
     }
 
-    private void serviceChanged(WhatHappened whatHappened, Topic node) {
-        String val = Coerce.toString(node);
-        if (val == null) {
+    private void serviceChanged(WhatHappened whatHappened, Topic secretParam) {
+        if (secretParam == null) {
             logger.atInfo().kv("service", SECRET_MANAGER_SERVICE_NAME).log("No secrets configured");
             return;
         }
+        logger.atError().log("POJO " + secretParam.toPOJO());
         try {
-            List<SecretConfiguration> configuredSecrets =
-                    OBJECT_MAPPER.readValue(val, new TypeReference<List<SecretConfiguration>>(){});
+            List<SecretConfiguration> configuredSecrets = OBJECT_MAPPER.convertValue(secretParam.toPOJO(),
+                    new TypeReference<List<SecretConfiguration>>(){});
             secretManager.syncFromCloud(configuredSecrets);
-        } catch (IOException e) {
-            logger.atWarn().kv("node", SECRETS_TOPIC).kv("value", val).setCause(e)
+        } catch (IllegalArgumentException e) {
+            logger.atError().kv("node", secretParam.getFullName()).kv("value", secretParam).setCause(e)
                     .log("Unable to parse secrets configured");
         } catch (SecretManagerException e) {
             logger.atWarn().kv("service", SECRET_MANAGER_SERVICE_NAME).setCause(e)
