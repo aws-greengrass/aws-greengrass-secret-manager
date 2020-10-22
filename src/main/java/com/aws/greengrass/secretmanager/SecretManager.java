@@ -21,6 +21,7 @@ import com.aws.greengrass.secretmanager.model.AWSSecretResponse;
 import com.aws.greengrass.secretmanager.model.SecretConfiguration;
 import com.aws.greengrass.secretmanager.model.SecretDocument;
 import com.aws.greengrass.util.Utils;
+import software.amazon.awssdk.aws.greengrass.model.SecretValue;
 import software.amazon.awssdk.core.SdkBytes;
 import software.amazon.awssdk.services.secretsmanager.model.GetSecretValueRequest;
 import software.amazon.awssdk.services.secretsmanager.model.GetSecretValueResponse;
@@ -295,10 +296,25 @@ public class SecretManager {
         try {
             GetSecretValueResponse secretResponse = getSecret(request.getSecretId(), request.getVersionId(),
                     request.getVersionStage());
-            return translateModeltoIpc(secretResponse);
+            return translateModeltoDeprecatedIpc(secretResponse);
         } catch (GetSecretException e) {
             return buildIPCErrorResponse(SecretResponseStatus.InvalidRequest, e.getMessage());
         }
+    }
+
+    /**
+     * Get a secret for IPC. Secrets are stored in memory and only loaded from disk on reload or when synced from
+     * cloud.
+     * @param request IPC request from kernel to get secret
+     * @return secret IPC response containing secret and metadata
+     * @throws GetSecretException when there is any issue accessing secret
+     */
+    public software.amazon.awssdk.aws.greengrass.model.GetSecretValueResponse
+    getSecret(software.amazon.awssdk.aws.greengrass.model.GetSecretValueRequest request)
+            throws GetSecretException {
+            GetSecretValueResponse secretResponse = getSecret(request.getSecretId(), request.getVersionId(),
+                    request.getVersionStage());
+            return translateModeltoIpc(secretResponse);
     }
 
     /**
@@ -357,7 +373,7 @@ public class SecretManager {
     }
 
     private com.aws.greengrass.ipc.services.secret.GetSecretValueResult
-        translateModeltoIpc(GetSecretValueResponse response) {
+        translateModeltoDeprecatedIpc(GetSecretValueResponse response) {
         byte[] secretBinary = null;
         if (response.secretBinary() != null) {
             secretBinary = response.secretBinary().asByteArray();
@@ -371,5 +387,22 @@ public class SecretManager {
                 .versionStages(response.versionStages())
                 .responseStatus(SecretResponseStatus.Success)
                 .build();
+    }
+
+    private software.amazon.awssdk.aws.greengrass.model.GetSecretValueResponse translateModeltoIpc(
+            GetSecretValueResponse response) {
+        software.amazon.awssdk.aws.greengrass.model.GetSecretValueResponse ipcResponse =
+                new software.amazon.awssdk.aws.greengrass.model.GetSecretValueResponse();
+        SecretValue secretValue = new SecretValue();
+        if (response.secretBinary() != null) {
+            secretValue.setSecretBinary(response.secretBinary().asByteArray());
+        } else {
+            secretValue.setSecretString(response.secretString());
+        }
+        ipcResponse.setSecretId(response.arn());
+        ipcResponse.setSecretValue(secretValue);
+        ipcResponse.setVersionId(response.versionId());
+        ipcResponse.setVersionStage(response.versionStages());
+        return ipcResponse;
     }
 }
