@@ -94,7 +94,7 @@ public class SecretManagerService extends PluginService {
         this.router = router;
         this.secretManager = secretManager;
         this.authorizationHandler = authorizationHandler;
-        // TODO: Subscribe on thing key updates
+        // GG_NEEDS_REVIEW: TODO: Subscribe on thing key updates
         topics.lookup(CONFIGURATION_CONFIG_KEY, SECRETS_TOPIC)
                 .subscribe(this::serviceChanged);
     }
@@ -140,13 +140,13 @@ public class SecretManagerService extends PluginService {
             logger.atInfo().setEventType("ipc-register-request-handler").addKeyValue("destination", destination.name())
                     .log();
         } catch (IPCException e) {
-            //TODO: validate why this is called multiple times
+            // GG_NEEDS_REVIEW: TODO: validate why this is called multiple times
         }
     }
 
     @Override
     public void startup() {
-        // TODO: Modify secret service to only provide interface to deal with downloaded
+        // GG_NEEDS_REVIEW: TODO: Modify secret service to only provide interface to deal with downloaded
         // secrets during download phase.
 
         // Since we have a valid directory, now try to load secrets if secrets file exists
