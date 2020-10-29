@@ -5,6 +5,8 @@
 
 package com.aws.greengrass.secretmanager;
 
+import com.aws.greengrass.logging.api.Logger;
+import com.aws.greengrass.logging.impl.LogManager;
 import lombok.AccessLevel;
 import lombok.Setter;
 import software.amazon.awssdk.aws.greengrass.GeneratedAbstractGetSecretValueOperationHandler;
@@ -19,6 +21,7 @@ import javax.inject.Inject;
  * Class to handle business logic for all SecretManager requests over IPC.
  */
 public class SecretManagerIPCAgent {
+    private static final Logger logger = LogManager.getLogger(SecretManagerIPCAgent.class);
 
     @Inject
     @Setter(AccessLevel.PACKAGE)
@@ -43,6 +46,7 @@ public class SecretManagerIPCAgent {
 
         @Override
         public GetSecretValueResponse handleRequest(GetSecretValueRequest request) {
+            logger.atDebug("ipc-get-secret-request").log();
             return secretManagerService.handleIPCRequest(request, serviceName);
         }
 
