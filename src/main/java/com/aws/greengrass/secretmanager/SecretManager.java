@@ -106,6 +106,7 @@ public class SecretManager {
      * @throws SecretManagerException when there are issues reading/writing to disk
      */
     public void syncFromCloud(List<SecretConfiguration> configuredSecrets) throws SecretManagerException {
+        logger.atDebug("sync-secret-from-cloud").log();
         List<AWSSecretResponse> downloadedSecrets = new ArrayList<>();
         for (SecretConfiguration secretConfig : configuredSecrets) {
             String secretArn = secretConfig.getArn();
@@ -182,6 +183,7 @@ public class SecretManager {
      * @throws SecretManagerException when there are issues reading from disk
      */
     public void loadSecretsFromLocalStore() throws SecretManagerException {
+        logger.atDebug("load-secret-local-store").log();
         // read the db
         List<AWSSecretResponse> secrets = secretDao.getAll().getSecrets();
         for (AWSSecretResponse secretResult : secrets) {
@@ -243,6 +245,8 @@ public class SecretManager {
 
     private GetSecretValueResponse getSecret(String secretId, String versionId, String versionStage)
         throws GetSecretException {
+        logger.atDebug("get-secret").kv("secretId", secretId).kv("versionId", versionId)
+                .kv("versionStage", versionStage).log();
         String arn = validateSecretId(secretId);
 
         // Both are optional

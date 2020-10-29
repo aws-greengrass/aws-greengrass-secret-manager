@@ -432,6 +432,7 @@ public class SecretManagerServiceTest {
         request.setSecretId(SECRET_ID);
         request.setVersionId(VERSION_ID);
 
+        when(mockSecretManager.validateSecretId(SECRET_ID)).thenReturn(SECRET_ID);
         when(mockSecretManager.getSecret(any(software.amazon.awssdk.aws.greengrass.model.GetSecretValueRequest.class))).thenReturn(response);
         when(mockAuthorizationHandler.isAuthorized(stringCaptor.capture(), permissionCaptor.capture()))
                 .thenReturn(true);

@@ -15,7 +15,6 @@ import com.aws.greengrass.dependency.ImplementsService;
 import com.aws.greengrass.dependency.State;
 import com.aws.greengrass.ipc.ConnectionContext;
 import com.aws.greengrass.ipc.IPCRouter;
-import com.aws.greengrass.ipc.Startable;
 import com.aws.greengrass.ipc.common.BuiltInServiceDestinationCode;
 import com.aws.greengrass.ipc.common.FrameReader;
 import com.aws.greengrass.ipc.exceptions.IPCException;
@@ -134,6 +133,10 @@ public class SecretManagerService extends PluginService {
                     .log("Failed to initialize the secret service with the Authorization module.");
         }
 
+        greengrassCoreIPCService.setGetSecretValueHandler(
+                context -> secretManagerIPCAgent.getSecretValueOperationHandler(context));
+        logger.atInfo("ipc-register-request-handler").log();
+
         try {
             router.registerServiceCallback(destination.getValue(), this::handleMessage);
             logger.atInfo().setEventType("ipc-register-request-handler").addKeyValue("destination", destination.name())
@@ -145,8 +148,6 @@ public class SecretManagerService extends PluginService {
 
     @Override
     public void startup() {
-        greengrassCoreIPCService.setGetSecretValueHandler(
-                context -> secretManagerIPCAgent.getSecretValueOperationHandler(context));
         // TODO: Modify secret service to only provide interface to deal with downloaded
         // secrets during download phase.
 
@@ -212,7 +213,8 @@ public class SecretManagerService extends PluginService {
     public GetSecretValueResponse handleIPCRequest(
             software.amazon.awssdk.aws.greengrass.model.GetSecretValueRequest request, String serviceName) {
         try {
-            doAuthorization(sdkToAuthCode.get(SecretClientOpCodes.GET_SECRET), serviceName, request.getSecretId());
+            validateSecretIdAndDoAuthorization(sdkToAuthCode.get(SecretClientOpCodes.GET_SECRET), serviceName,
+                    request.getSecretId());
             logger.atInfo().event("secret-access").kv("Principal", serviceName).kv("secret", request.getSecretId())
                     .log("requested secret");
             return secretManager.getSecret(request);
