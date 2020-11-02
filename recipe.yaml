@@ -7,7 +7,7 @@ ComponentVersion: '0.0.0'
 ComponentType: 'aws.greengrass.plugin'
 ComponentConfiguration:
   DefaultConfiguration:
-    cloudSecrets: '[]'
+    cloudSecrets: []
 Manifests:
   - Artifacts:
       - URI: s3://gg-dev-artifacts-$stage/$componentName/$version/aws.greengrass.SecretManager.jar
