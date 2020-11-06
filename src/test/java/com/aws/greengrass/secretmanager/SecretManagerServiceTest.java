@@ -68,6 +68,7 @@ import static org.mockito.Mockito.when;
 @ExtendWith({MockitoExtension.class, GGExtension.class})
 public class SecretManagerServiceTest {
     private static final ObjectMapper CBOR_MAPPER = new CBORMapper();
+    private static final ObjectMapper OBJECT_MAPPER = new ObjectMapper();
     private final String SECRET_ID = "secret";
     private final String SECRET_NAME = "secretName";
     private final String VERSION_ID = "id";
@@ -219,14 +220,9 @@ public class SecretManagerServiceTest {
         when(mockSecretManager.validateSecretId(SECRET_ID)).thenReturn(SECRET_ID);
         when(mockAuthorizationHandler.isAuthorized(stringCaptor.capture(), permissionCaptor.capture())).thenReturn(true);
 
-        com.aws.greengrass.secretmanager.model.v1.GetSecretValueRequest request =
-                com.aws.greengrass.secretmanager.model.v1.GetSecretValueRequest.builder()
-                        .secretId(SECRET_ID)
-                        .versionId(VERSION_ID)
-                        .build();
-        byte[] byteRequest = CBOR_MAPPER.writeValueAsBytes(request);
+        String requestString = String.format("{\"SecretId\": \"%s\", \"VersionId\": \"%s\"}", SECRET_ID, VERSION_ID);
         GetSecretResponse getSecretResponse =
-                kernel.getContext().get(SecretManagerService.class).getSecret(serviceName, byteRequest);
+                kernel.getContext().get(SecretManagerService.class).getSecret(serviceName, requestString.getBytes());
 
         com.aws.greengrass.secretmanager.model.v1.GetSecretValueResult actualResponse = getSecretResponse.getSecret();
 
@@ -247,12 +243,9 @@ public class SecretManagerServiceTest {
 
         // Now request with secret name that maps to the arn
         when(mockSecretManager.validateSecretId(SECRET_NAME)).thenReturn(SECRET_ID);
-        com.aws.greengrass.secretmanager.model.v1.GetSecretValueRequest newRequest =
-                com.aws.greengrass.secretmanager.model.v1.GetSecretValueRequest.builder().secretId(SECRET_NAME)
-                        .versionId(VERSION_ID).build();
-        byte[] newByteRequest = CBOR_MAPPER.writeValueAsBytes(newRequest);
+        String newRequestString = String.format("{\"SecretId\": \"%s\", \"VersionId\": \"%s\"}", SECRET_NAME, VERSION_ID);
         getSecretResponse =
-                kernel.getContext().get(SecretManagerService.class).getSecret(serviceName, newByteRequest);
+                kernel.getContext().get(SecretManagerService.class).getSecret(serviceName, newRequestString.getBytes());
 
         com.aws.greengrass.secretmanager.model.v1.GetSecretValueResult newActualResponse = getSecretResponse.getSecret();
         assertEquals(actualResponse, newActualResponse);
@@ -272,7 +265,7 @@ public class SecretManagerServiceTest {
                         .secretId(SECRET_ID)
                         .versionId(VERSION_ID)
                         .build();
-        byte[] byteRequest = CBOR_MAPPER.writeValueAsBytes(request);
+        byte[] byteRequest = OBJECT_MAPPER.writeValueAsBytes(request);
         GetSecretResponse getSecretResponse =
                 kernel.getContext().get(SecretManagerService.class).getSecret(serviceName, byteRequest);
         assertNull(getSecretResponse.getSecret());
@@ -335,7 +328,7 @@ public class SecretManagerServiceTest {
                         .secretId(SECRET_ID)
                         .versionId(VERSION_ID)
                         .build();
-        byte[] byteRequest = CBOR_MAPPER.writeValueAsBytes(request);
+        byte[] byteRequest = OBJECT_MAPPER.writeValueAsBytes(request);
         GetSecretResponse getSecretResponse = kernel.getContext().get(SecretManagerService.class).getSecret(serviceName, byteRequest);
         assertNull(getSecretResponse.getSecret());
         com.aws.greengrass.secretmanager.model.v1.GetSecretValueError actualResponse = getSecretResponse.getError();
@@ -355,7 +348,7 @@ public class SecretManagerServiceTest {
         assertThat(actualResponse.getMessage(), containsString("test"));
 
         // Now send in a bad request
-        byteRequest = CBOR_MAPPER.writeValueAsBytes("bad request");
+        byteRequest = OBJECT_MAPPER.writeValueAsBytes("bad request");
         getSecretResponse = kernel.getContext().get(SecretManagerService.class).getSecret(serviceName, byteRequest);
         assertNull(getSecretResponse.getSecret());
         actualResponse = getSecretResponse.getError();
