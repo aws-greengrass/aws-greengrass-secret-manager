@@ -174,7 +174,9 @@ public class SecretManagerService extends PluginService {
         int status;
         String message = null;
         try {
-            com.aws.greengrass.secretmanager.model.v1.GetSecretValueRequest getSecretValueRequest = CBOR_MAPPER
+            logger.atInfo().event("secret-access").kv("Principal", serviceName)
+                    .kv("secret", new String(request)).log("requested secret");
+            com.aws.greengrass.secretmanager.model.v1.GetSecretValueRequest getSecretValueRequest = OBJECT_MAPPER
                     .readValue(request, com.aws.greengrass.secretmanager.model.v1.GetSecretValueRequest.class);
             validateSecretIdAndDoAuthorization(SECRETS_AUTHORIZATION_OPCODE, serviceName,
                     getSecretValueRequest.getSecretId());
