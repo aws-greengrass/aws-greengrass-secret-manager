@@ -360,16 +360,24 @@ public class SecretManager {
 
     private com.aws.greengrass.secretmanager.model.v1.GetSecretValueResult
         translateModeltov1(GetSecretValueResponse response) {
-        byte[] secretBinary = null;
         if (response.secretBinary() != null) {
-            secretBinary = response.secretBinary().asByteArray();
+            return com.aws.greengrass.secretmanager.model.v1.GetSecretValueResult
+                    .builder()
+                    .arn(response.arn())
+                    .name(response.name())
+                    .secretString(null)
+                    .secretBinary(ByteBuffer.wrap(response.secretBinary().asByteArray()))
+                    .versionId(response.versionId())
+                    .versionStages(response.versionStages())
+                    .createdDate(Date.from(response.createdDate()))
+                    .build();
         }
         return com.aws.greengrass.secretmanager.model.v1.GetSecretValueResult
                 .builder()
                 .arn(response.arn())
                 .name(response.name())
                 .secretString(response.secretString())
-                .secretBinary(ByteBuffer.wrap(secretBinary))
+                .secretBinary(null)
                 .versionId(response.versionId())
                 .versionStages(response.versionStages())
                 .createdDate(Date.from(response.createdDate()))
