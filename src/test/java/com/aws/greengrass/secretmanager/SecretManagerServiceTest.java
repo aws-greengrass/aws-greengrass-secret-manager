@@ -252,7 +252,9 @@ public class SecretManagerServiceTest {
     }
 
     @Test
-    void GIVEN_secret_service_WHEN_v1_get_called_and_errors_THEN_correct_response_returned() throws Exception {
+    void GIVEN_secret_service_WHEN_v1_get_called_and_errors_THEN_correct_response_returned(ExtensionContext context)
+            throws Exception {
+        ignoreExceptionOfType(context, RuntimeException.class);
         startKernelWithConfig("config.yaml", State.RUNNING);
         final String serviceName = "mockService";
 

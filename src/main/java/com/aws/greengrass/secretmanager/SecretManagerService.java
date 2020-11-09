@@ -30,6 +30,7 @@ import com.aws.greengrass.secretmanager.exception.v1.GetSecretException;
 import com.aws.greengrass.secretmanager.model.GetSecretResponse;
 import com.aws.greengrass.secretmanager.model.SecretConfiguration;
 import com.aws.greengrass.secretmanager.model.v1.GetSecretValueError;
+import com.aws.greengrass.secretmanager.model.v1.GetSecretValueResult;
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.MapperFeature;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -107,7 +108,11 @@ public class SecretManagerService extends PluginService {
         try {
             List<SecretConfiguration> configuredSecrets = OBJECT_MAPPER.convertValue(secretParam.toPOJO(),
                     new TypeReference<List<SecretConfiguration>>(){});
-            secretManager.syncFromCloud(configuredSecrets);
+            if (configuredSecrets != null) {
+                secretManager.syncFromCloud(configuredSecrets);
+            } else {
+                logger.atError().kv("secrets", secretParam.toString()).log("No secrets configured");
+            }
         } catch (IllegalArgumentException e) {
             logger.atError().kv("node", secretParam.getFullName()).kv("value", secretParam).setCause(e)
                     .log("Unable to parse secrets configured");
@@ -180,8 +185,6 @@ public class SecretManagerService extends PluginService {
                     .readValue(request, com.aws.greengrass.secretmanager.model.v1.GetSecretValueRequest.class);
             validateSecretIdAndDoAuthorization(SECRETS_AUTHORIZATION_OPCODE, serviceName,
                     getSecretValueRequest.getSecretId());
-            logger.atInfo().event("secret-access").kv("Principal", serviceName)
-                    .kv("secret", getSecretValueRequest.getSecretId()).log("requested secret");
             return GetSecretResponse.builder().secret(secretManager.getSecret(getSecretValueRequest)).build();
         } catch (GetSecretException t) {
             status = t.getStatus();
@@ -195,6 +198,7 @@ public class SecretManagerService extends PluginService {
         } catch (Throwable t) {
             status = 500;
             message = t.getMessage();
+            logger.atError().event("secret-access-error").setCause(t).log("Error getting secret");
         }
         return GetSecretResponse.builder().error(GetSecretValueError.builder().status(status).message(message)
                 .build()).build();

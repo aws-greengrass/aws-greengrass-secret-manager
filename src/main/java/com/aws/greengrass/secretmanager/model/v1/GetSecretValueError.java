@@ -15,7 +15,7 @@ import lombok.NoArgsConstructor;
 @Data
 @AllArgsConstructor
 @NoArgsConstructor
-public class GetSecretValueError extends Exception {
+public class GetSecretValueError {
     /**
      * Status code for the error response.
      */
