@@ -23,6 +23,7 @@ import com.aws.greengrass.secretmanager.model.SecretDocument;
 import com.aws.greengrass.util.Utils;
 import software.amazon.awssdk.aws.greengrass.model.SecretValue;
 import software.amazon.awssdk.core.SdkBytes;
+import software.amazon.awssdk.core.exception.SdkClientException;
 import software.amazon.awssdk.services.secretsmanager.model.GetSecretValueRequest;
 import software.amazon.awssdk.services.secretsmanager.model.GetSecretValueResponse;
 
@@ -126,7 +127,7 @@ public class SecretManager {
                 try {
                     AWSSecretResponse encryptedResult = fetchAndEncryptAWSResponse(request);
                     downloadedSecrets.add(encryptedResult);
-                } catch (IOException e) {
+                } catch (IOException | SdkClientException e) {
                     AWSSecretResponse secretFromDao = secretDao.get(secretArn, label);
                     if (secretFromDao != null) {
                         downloadedSecrets.add(secretFromDao);
@@ -186,9 +187,13 @@ public class SecretManager {
         logger.atDebug("load-secret-local-store").log();
         // read the db
         List<AWSSecretResponse> secrets = secretDao.getAll().getSecrets();
-        for (AWSSecretResponse secretResult : secrets) {
-            nametoArnMap.put(secretResult.getName(), secretResult.getArn());
-            loadCache(secretResult);
+        nametoArnMap.clear();
+        cache.clear();
+        if (!Utils.isEmpty(secrets)) {
+            for (AWSSecretResponse secretResult : secrets) {
+                nametoArnMap.put(secretResult.getName(), secretResult.getArn());
+                loadCache(secretResult);
+            }
         }
     }
 

@@ -30,7 +30,6 @@ import com.aws.greengrass.secretmanager.exception.v1.GetSecretException;
 import com.aws.greengrass.secretmanager.model.GetSecretResponse;
 import com.aws.greengrass.secretmanager.model.SecretConfiguration;
 import com.aws.greengrass.secretmanager.model.v1.GetSecretValueError;
-import com.aws.greengrass.secretmanager.model.v1.GetSecretValueResult;
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.MapperFeature;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -42,6 +41,7 @@ import software.amazon.awssdk.aws.greengrass.model.ServiceError;
 import software.amazon.awssdk.aws.greengrass.model.UnauthorizedError;
 
 import java.io.IOException;
+import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.EnumMap;
 import java.util.HashSet;
@@ -101,17 +101,19 @@ public class SecretManagerService extends PluginService {
     }
 
     private void serviceChanged(WhatHappened whatHappened, Topic secretParam) {
-        if (secretParam == null) {
-            logger.atInfo().kv("service", SECRET_MANAGER_SERVICE_NAME).log("No secrets configured");
-            return;
-        }
         try {
-            List<SecretConfiguration> configuredSecrets = OBJECT_MAPPER.convertValue(secretParam.toPOJO(),
-                    new TypeReference<List<SecretConfiguration>>(){});
+            if (secretParam == null) {
+                logger.atInfo().kv("service", SECRET_MANAGER_SERVICE_NAME).log("No secrets configured");
+                secretManager.syncFromCloud(new ArrayList<>());
+                return;
+            }
+            List<SecretConfiguration> configuredSecrets =
+                    OBJECT_MAPPER.convertValue(secretParam.toPOJO(), new TypeReference<List<SecretConfiguration>>() {
+                    });
             if (configuredSecrets != null) {
                 secretManager.syncFromCloud(configuredSecrets);
             } else {
-                logger.atError().kv("secrets", secretParam.toString()).log("No secrets configured");
+                logger.atError().kv("secrets", secretParam.toString()).log("Unable to parse secrets configured");
             }
         } catch (IllegalArgumentException e) {
             logger.atError().kv("node", secretParam.getFullName()).kv("value", secretParam).setCause(e)

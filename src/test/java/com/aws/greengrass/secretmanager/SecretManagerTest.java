@@ -17,6 +17,7 @@ import com.aws.greengrass.secretmanager.crypto.PemFile;
 import com.aws.greengrass.secretmanager.crypto.RSAMasterKey;
 import com.aws.greengrass.secretmanager.exception.SecretCryptoException;
 import com.aws.greengrass.secretmanager.exception.SecretManagerException;
+import com.aws.greengrass.secretmanager.exception.v1.GetSecretException;
 import com.aws.greengrass.secretmanager.kernel.KernelClient;
 import com.aws.greengrass.secretmanager.model.AWSSecretResponse;
 import com.aws.greengrass.secretmanager.model.SecretConfiguration;
@@ -429,6 +430,38 @@ class SecretManagerTest {
                 awsClientRequestCaptor.getAllValues();
         assertEquals(1, awsRequest.size());
         assertEquals(ARN_1, awsRequest.get(0).secretId());
+    }
+
+    @Test
+    void GIVEN_secret_manager_WHEN_empty_secret_config_THEN_local_secrets_are_removed(ExtensionContext context) throws Exception {
+        ignoreExceptionOfType(context, SecretManagerException.class);
+        List<AWSSecretResponse> storedSecrets = new ArrayList<>();
+        storedSecrets.add(getMockDaoSecretA());
+        when(mockDao.getAll()).thenReturn(SecretDocument.builder().secrets(storedSecrets).build());
+        SecretManager sm = new SecretManager(mockAWSSecretClient, mockKernelClient, mockDao);
+
+        // Load one secret from local and verify
+        sm.loadSecretsFromLocalStore();
+        software.amazon.awssdk.aws.greengrass.model.GetSecretValueRequest
+                request = new software.amazon.awssdk.aws.greengrass.model.GetSecretValueRequest();
+        request.setSecretId(SECRET_NAME_1);
+        System.out.println(sm.getSecret(request).getSecretId());
+        assertEquals(SECRET_VALUE_1, new String(sm.getSecret(request).getSecretValue().getSecretBinary()));
+
+        // Now pass in empty config and assert no secret is saved
+        sm.syncFromCloud(new ArrayList<>());
+        verify(mockDao, times(1)).saveAll(documentArgumentCaptor.capture());
+        assertEquals(0, documentArgumentCaptor.getValue().getSecrets().size());
+
+        // Load doc and assert secret removed
+        when(mockDao.getAll()).thenReturn(documentArgumentCaptor.getValue());
+        sm.loadSecretsFromLocalStore();
+        try {
+            sm.getSecret(request);
+        } catch (GetSecretException e) {
+            assertEquals("Secret not found " + SECRET_NAME_1, e.getMessage());
+            assertEquals(404, e.getStatus());
+        }
     }
 
     @Test

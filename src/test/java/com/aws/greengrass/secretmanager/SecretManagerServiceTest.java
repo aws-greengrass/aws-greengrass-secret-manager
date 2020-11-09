@@ -152,6 +152,11 @@ public class SecretManagerServiceTest {
     }
 
     @Test
+    void GIVEN_secret_service_WHEN_started_without_secret_entry_THEN_starts_successfully(ExtensionContext context) throws InterruptedException {
+        startKernelWithConfig("emptySecretConfig.yaml", State.RUNNING);
+    }
+
+    @Test
     void GIVEN_secret_service_WHEN_handler_called_THEN_correct_response_returned() throws Exception {
         startKernelWithConfig("config.yaml", State.RUNNING);
         final String secretValue = "secretValue";
