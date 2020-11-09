@@ -316,10 +316,11 @@ class SecretManagerTest {
 
     @Test
     void GIVEN_secret_manager_WHEN_sync_from_cloud_THEN_v1_secret_api_works() throws Exception {
-        when(mockAWSSecretClient.getSecret(any())).thenReturn(getMockSecretA()).thenReturn(getMockSecretB());
+        when(mockAWSSecretClient.getSecret(any())).thenReturn(getMockSecretAWithSecretString())
+                .thenReturn(getMockSecretBWithSecretBinary());
         List<AWSSecretResponse> storedSecrets = new ArrayList<>();
-        storedSecrets.add(getMockDaoSecretA());
-        storedSecrets.add(getMockDaoSecretB());
+        storedSecrets.add(getMockDaoSecretAWithSecretString());
+        storedSecrets.add(getMockDaoSecretBWithSecretBinary());
         when(mockDao.getAll()).thenReturn(SecretDocument.builder().secrets(storedSecrets).build());
         SecretManager sm = new SecretManager(mockAWSSecretClient, crypter, mockDao);
         sm.syncFromCloud(getMockSecrets());
@@ -330,7 +331,6 @@ class SecretManagerTest {
         com.aws.greengrass.secretmanager.model.v1.GetSecretValueResult getSecretValueResult = sm.getSecret(request);
 
         assertEquals(SECRET_VALUE_1, getSecretValueResult.getSecretString());
-        assertEquals(ByteBuffer.wrap(SECRET_VALUE_BINARY_1), getSecretValueResult.getSecretBinary());
         assertEquals(Date.from(SECRET_DATE_1), getSecretValueResult.getCreatedDate());
         assertEquals(SECRET_NAME_1, getSecretValueResult.getName());
         assertEquals(ARN_1, getSecretValueResult.getArn());
@@ -343,7 +343,6 @@ class SecretManagerTest {
                 .builder().secretId(SECRET_NAME_2).build();
         getSecretValueResult = sm.getSecret(request);
 
-        assertEquals(SECRET_VALUE_2, getSecretValueResult.getSecretString());
         assertEquals(ByteBuffer.wrap(SECRET_VALUE_BINARY_2), getSecretValueResult.getSecretBinary());
         assertEquals(Date.from(SECRET_DATE_2), getSecretValueResult.getCreatedDate());
         assertEquals(SECRET_NAME_2, getSecretValueResult.getName());
@@ -359,7 +358,6 @@ class SecretManagerTest {
         getSecretValueResult = sm.getSecret(request);
 
         assertEquals(SECRET_VALUE_1, getSecretValueResult.getSecretString());
-        assertEquals(ByteBuffer.wrap(SECRET_VALUE_BINARY_1), getSecretValueResult.getSecretBinary());
         assertEquals(Date.from(SECRET_DATE_1), getSecretValueResult.getCreatedDate());
         assertEquals(SECRET_NAME_1, getSecretValueResult.getName());
         assertEquals(ARN_1, getSecretValueResult.getArn());
@@ -372,7 +370,6 @@ class SecretManagerTest {
                 .builder().secretId(SECRET_NAME_2).versionStage(SECRET_LABEL_2).build();
         getSecretValueResult = sm.getSecret(request);
 
-        assertEquals(SECRET_VALUE_2, getSecretValueResult.getSecretString());
         assertEquals(ByteBuffer.wrap(SECRET_VALUE_BINARY_2), getSecretValueResult.getSecretBinary());
         assertEquals(Date.from(SECRET_DATE_2), getSecretValueResult.getCreatedDate());
         assertEquals(SECRET_NAME_2, getSecretValueResult.getName());
@@ -388,7 +385,6 @@ class SecretManagerTest {
         getSecretValueResult = sm.getSecret(request);
 
         assertEquals(SECRET_VALUE_1, getSecretValueResult.getSecretString());
-        assertEquals(ByteBuffer.wrap(SECRET_VALUE_BINARY_1), getSecretValueResult.getSecretBinary());
         assertEquals(ARN_1, getSecretValueResult.getArn());
         assertEquals(SECRET_NAME_1, getSecretValueResult.getName());
         assertEquals(Date.from(SECRET_DATE_1), getSecretValueResult.getCreatedDate());
@@ -401,7 +397,6 @@ class SecretManagerTest {
                 .builder().secretId(SECRET_NAME_2).versionId(SECRET_VERSION_2).build();
         getSecretValueResult = sm.getSecret(request);
 
-        assertEquals(SECRET_VALUE_2, getSecretValueResult.getSecretString());
         assertEquals(ByteBuffer.wrap(SECRET_VALUE_BINARY_2), getSecretValueResult.getSecretBinary());
         assertEquals(Date.from(SECRET_DATE_2), getSecretValueResult.getCreatedDate());
         assertEquals(SECRET_NAME_2, getSecretValueResult.getName());
