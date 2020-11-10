@@ -5,7 +5,6 @@
 
 package com.aws.greengrass.secretmanager;
 
-import com.aws.greengrass.ipc.services.secret.SecretResponseStatus;
 import com.aws.greengrass.logging.api.Logger;
 import com.aws.greengrass.logging.impl.LogManager;
 import com.aws.greengrass.secretmanager.crypto.Crypter;
@@ -23,6 +22,7 @@ import com.aws.greengrass.secretmanager.model.SecretDocument;
 import com.aws.greengrass.util.Utils;
 import software.amazon.awssdk.aws.greengrass.model.SecretValue;
 import software.amazon.awssdk.core.SdkBytes;
+import software.amazon.awssdk.core.exception.SdkClientException;
 import software.amazon.awssdk.services.secretsmanager.model.GetSecretValueRequest;
 import software.amazon.awssdk.services.secretsmanager.model.GetSecretValueResponse;
 
@@ -126,7 +126,7 @@ public class SecretManager {
                 try {
                     AWSSecretResponse encryptedResult = fetchAndEncryptAWSResponse(request);
                     downloadedSecrets.add(encryptedResult);
-                } catch (IOException e) {
+                } catch (IOException | SdkClientException e) {
                     AWSSecretResponse secretFromDao = secretDao.get(secretArn, label);
                     if (secretFromDao != null) {
                         downloadedSecrets.add(secretFromDao);
@@ -186,9 +186,13 @@ public class SecretManager {
         logger.atDebug("load-secret-local-store").log();
         // read the db
         List<AWSSecretResponse> secrets = secretDao.getAll().getSecrets();
-        for (AWSSecretResponse secretResult : secrets) {
-            nametoArnMap.put(secretResult.getName(), secretResult.getArn());
-            loadCache(secretResult);
+        nametoArnMap.clear();
+        cache.clear();
+        if (!Utils.isEmpty(secrets)) {
+            for (AWSSecretResponse secretResult : secrets) {
+                nametoArnMap.put(secretResult.getName(), secretResult.getArn());
+                loadCache(secretResult);
+            }
         }
     }
 
@@ -291,22 +295,6 @@ public class SecretManager {
     }
 
     /**
-     * Get a secret. Secrets are stored in memory and only loaded from disk on reload or when synced from cloud.
-     * @param request IPC request from kernel to get secret
-     * @return secret IPC response containing secret and metadata
-     */
-    public com.aws.greengrass.ipc.services.secret.GetSecretValueResult
-        getSecret(com.aws.greengrass.ipc.services.secret.GetSecretValueRequest request) {
-        try {
-            GetSecretValueResponse secretResponse = getSecret(request.getSecretId(), request.getVersionId(),
-                    request.getVersionStage());
-            return translateModeltoDeprecatedIpc(secretResponse);
-        } catch (GetSecretException e) {
-            return buildIPCErrorResponse(SecretResponseStatus.InvalidRequest, e.getMessage());
-        }
-    }
-
-    /**
      * Get a secret for IPC. Secrets are stored in memory and only loaded from disk on reload or when synced from
      * cloud.
      * @param request IPC request from kernel to get secret
@@ -348,16 +336,6 @@ public class SecretManager {
         return arn;
     }
 
-
-    private com.aws.greengrass.ipc.services.secret.GetSecretValueResult
-        buildIPCErrorResponse(SecretResponseStatus status, String error) {
-        return com.aws.greengrass.ipc.services.secret.GetSecretValueResult
-                .builder()
-                .responseStatus(status)
-                .errorMessage(error)
-                .build();
-    }
-
     private com.aws.greengrass.secretmanager.model.v1.GetSecretValueResult
         translateModeltov1(GetSecretValueResponse response) {
         if (response.secretBinary() != null) {
@@ -381,23 +359,6 @@ public class SecretManager {
                 .versionId(response.versionId())
                 .versionStages(response.versionStages())
                 .createdDate(Date.from(response.createdDate()))
-                .build();
-    }
-
-    private com.aws.greengrass.ipc.services.secret.GetSecretValueResult
-        translateModeltoDeprecatedIpc(GetSecretValueResponse response) {
-        byte[] secretBinary = null;
-        if (response.secretBinary() != null) {
-            secretBinary = response.secretBinary().asByteArray();
-        }
-        return com.aws.greengrass.ipc.services.secret.GetSecretValueResult
-                .builder()
-                .secretId(response.arn())
-                .secretString(response.secretString())
-                .secretBinary(secretBinary)
-                .versionId(response.versionId())
-                .versionStages(response.versionStages())
-                .responseStatus(SecretResponseStatus.Success)
                 .build();
     }
 
