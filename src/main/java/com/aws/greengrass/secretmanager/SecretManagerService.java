@@ -13,16 +13,7 @@ import com.aws.greengrass.config.Topics;
 import com.aws.greengrass.config.WhatHappened;
 import com.aws.greengrass.dependency.ImplementsService;
 import com.aws.greengrass.dependency.State;
-import com.aws.greengrass.ipc.ConnectionContext;
-import com.aws.greengrass.ipc.IPCRouter;
-import com.aws.greengrass.ipc.common.BuiltInServiceDestinationCode;
-import com.aws.greengrass.ipc.common.FrameReader;
-import com.aws.greengrass.ipc.exceptions.IPCException;
-import com.aws.greengrass.ipc.services.common.ApplicationMessage;
-import com.aws.greengrass.ipc.services.secret.GetSecretValueRequest;
 import com.aws.greengrass.ipc.services.secret.SecretClientOpCodes;
-import com.aws.greengrass.ipc.services.secret.SecretGenericResponse;
-import com.aws.greengrass.ipc.services.secret.SecretResponseStatus;
 import com.aws.greengrass.lifecyclemanager.PluginService;
 import com.aws.greengrass.secretmanager.exception.NoSecretFoundException;
 import com.aws.greengrass.secretmanager.exception.SecretManagerException;
@@ -47,8 +38,6 @@ import java.util.EnumMap;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
-import java.util.concurrent.CompletableFuture;
-import java.util.concurrent.Future;
 import javax.inject.Inject;
 
 import static com.aws.greengrass.componentmanager.KernelConfigResolver.CONFIGURATION_CONFIG_KEY;
@@ -65,7 +54,6 @@ public class SecretManagerService extends PluginService {
 
     private static final Map<SecretClientOpCodes, String> sdkToAuthCode;
     private final SecretManager secretManager;
-    private final IPCRouter router;
     private AuthorizationHandler authorizationHandler;
 
     @Inject
@@ -82,17 +70,14 @@ public class SecretManagerService extends PluginService {
     /**
      * Constructor for SecretManagerService Service.
      * @param topics                root Configuration topic for this service
-     * @param router                router for registering the IPC callback
      * @param secretManager         secret manager which manages secrets
      * @param authorizationHandler  authorization handler
      */
     @Inject
     public SecretManagerService(Topics topics,
-                                IPCRouter router,
                                 SecretManager secretManager,
                                 AuthorizationHandler authorizationHandler) {
         super(topics);
-        this.router = router;
         this.secretManager = secretManager;
         this.authorizationHandler = authorizationHandler;
         // GG_NEEDS_REVIEW: TODO: Subscribe on thing key updates
@@ -127,28 +112,18 @@ public class SecretManagerService extends PluginService {
 
     @Override
     public void postInject() {
-        BuiltInServiceDestinationCode destination = BuiltInServiceDestinationCode.SECRET;
         super.postInject();
         try {
             authorizationHandler.registerComponent(this.getName(), new HashSet<>(
                     Arrays.asList(SECRETS_AUTHORIZATION_OPCODE)));
         } catch (AuthorizationException e) {
             logger.atError("initialize-secret-authorization-error", e)
-                    .kv(IPCRouter.DESTINATION_STRING, destination.name())
                     .log("Failed to initialize the secret service with the Authorization module.");
         }
 
         greengrassCoreIPCService.setGetSecretValueHandler(
                 context -> secretManagerIPCAgent.getSecretValueOperationHandler(context));
         logger.atInfo("ipc-register-request-handler").log();
-
-        try {
-            router.registerServiceCallback(destination.getValue(), this::handleMessage);
-            logger.atInfo().setEventType("ipc-register-request-handler").addKeyValue("destination", destination.name())
-                    .log();
-        } catch (IPCException e) {
-            // GG_NEEDS_REVIEW: TODO: validate why this is called multiple times
-        }
     }
 
     @Override
@@ -207,7 +182,7 @@ public class SecretManagerService extends PluginService {
     }
 
     /**
-     * Handles secret API calls from new IPC.
+     * Handles secret API calls from IPC.
      *
      * @param request     get secret request from IPC API
      * @param serviceName component name of the request
@@ -235,62 +210,6 @@ public class SecretManagerService extends PluginService {
             }
             throw new ServiceError(e.getMessage());
         }
-    }
-
-    /**
-     * Handles secret API calls from IPC.
-     * @param message  API message received from a client.
-     * @param context  connection context received from a client.
-     * @return API response as IPC frame
-     */
-    public Future<FrameReader.Message> handleMessage(FrameReader.Message message, ConnectionContext context) {
-        CompletableFuture<FrameReader.Message> fut = new CompletableFuture<>();
-        ApplicationMessage applicationMessage = ApplicationMessage.fromBytes(message.getPayload());
-        try {
-            SecretClientOpCodes opCode = SecretClientOpCodes.values()[applicationMessage.getOpCode()];
-            SecretGenericResponse response = new SecretGenericResponse();
-            switch (opCode) {
-                case GET_SECRET:
-                    GetSecretValueRequest request =
-                            CBOR_MAPPER.readValue(applicationMessage.getPayload(), GetSecretValueRequest.class);
-                    validateSecretIdAndDoAuthorization(sdkToAuthCode.get(opCode), context.getServiceName(),
-                            request.getSecretId());
-                    logger.atInfo().event("secret-access").kv("Principal", context.getServiceName())
-                            .kv("secret", request.getSecretId()).log("requested secret");
-                    response = secretManager.getSecret(request);
-                    response.setStatus(SecretResponseStatus.Success);
-                    break;
-                default:
-                    response.setStatus(SecretResponseStatus.InvalidRequest);
-                    response.setErrorMessage("Unknown request type " + opCode.toString());
-                    break;
-            }
-            ApplicationMessage responseMessage = ApplicationMessage.builder().version(applicationMessage.getVersion())
-                    .payload(CBOR_MAPPER.writeValueAsBytes(response)).build();
-            fut.complete(new FrameReader.Message(responseMessage.toByteArray()));
-        } catch (Throwable t) {
-            logger.atError().setEventType("secret-error").setCause(t).log("Failed to handle message");
-            SecretResponseStatus status = SecretResponseStatus.InternalError;
-            if (t instanceof AuthorizationException) {
-                status = SecretResponseStatus.Unauthorized;
-            }
-            if (t instanceof GetSecretException) {
-                status = SecretResponseStatus.InvalidRequest;
-            }
-            SecretGenericResponse response = new SecretGenericResponse(status, t.getMessage());
-            try {
-                ApplicationMessage responseMessage =
-                        ApplicationMessage.builder().version(applicationMessage.getVersion())
-                                .payload(CBOR_MAPPER.writeValueAsBytes(response)).build();
-                fut.complete(new FrameReader.Message(responseMessage.toByteArray()));
-            } catch (IOException ex) {
-                logger.atError("secret-error", ex).log("Failed to send error response");
-            }
-        }
-        if (!fut.isDone()) {
-            fut.completeExceptionally(new IPCException("Unable to serialize any responses"));
-        }
-        return fut;
     }
 
     private void validateSecretIdAndDoAuthorization(String opCode, String serviceName, String secretId)

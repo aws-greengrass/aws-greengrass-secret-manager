@@ -5,7 +5,6 @@
 
 package com.aws.greengrass.secretmanager;
 
-import com.aws.greengrass.ipc.services.secret.SecretResponseStatus;
 import com.aws.greengrass.logging.api.Logger;
 import com.aws.greengrass.logging.impl.LogManager;
 import com.aws.greengrass.secretmanager.crypto.Crypter;
@@ -296,22 +295,6 @@ public class SecretManager {
     }
 
     /**
-     * Get a secret. Secrets are stored in memory and only loaded from disk on reload or when synced from cloud.
-     * @param request IPC request from kernel to get secret
-     * @return secret IPC response containing secret and metadata
-     */
-    public com.aws.greengrass.ipc.services.secret.GetSecretValueResult
-        getSecret(com.aws.greengrass.ipc.services.secret.GetSecretValueRequest request) {
-        try {
-            GetSecretValueResponse secretResponse = getSecret(request.getSecretId(), request.getVersionId(),
-                    request.getVersionStage());
-            return translateModeltoDeprecatedIpc(secretResponse);
-        } catch (GetSecretException e) {
-            return buildIPCErrorResponse(SecretResponseStatus.InvalidRequest, e.getMessage());
-        }
-    }
-
-    /**
      * Get a secret for IPC. Secrets are stored in memory and only loaded from disk on reload or when synced from
      * cloud.
      * @param request IPC request from kernel to get secret
@@ -353,16 +336,6 @@ public class SecretManager {
         return arn;
     }
 
-
-    private com.aws.greengrass.ipc.services.secret.GetSecretValueResult
-        buildIPCErrorResponse(SecretResponseStatus status, String error) {
-        return com.aws.greengrass.ipc.services.secret.GetSecretValueResult
-                .builder()
-                .responseStatus(status)
-                .errorMessage(error)
-                .build();
-    }
-
     private com.aws.greengrass.secretmanager.model.v1.GetSecretValueResult
         translateModeltov1(GetSecretValueResponse response) {
         if (response.secretBinary() != null) {
@@ -386,23 +359,6 @@ public class SecretManager {
                 .versionId(response.versionId())
                 .versionStages(response.versionStages())
                 .createdDate(Date.from(response.createdDate()))
-                .build();
-    }
-
-    private com.aws.greengrass.ipc.services.secret.GetSecretValueResult
-        translateModeltoDeprecatedIpc(GetSecretValueResponse response) {
-        byte[] secretBinary = null;
-        if (response.secretBinary() != null) {
-            secretBinary = response.secretBinary().asByteArray();
-        }
-        return com.aws.greengrass.ipc.services.secret.GetSecretValueResult
-                .builder()
-                .secretId(response.arn())
-                .secretString(response.secretString())
-                .secretBinary(secretBinary)
-                .versionId(response.versionId())
-                .versionStages(response.versionStages())
-                .responseStatus(SecretResponseStatus.Success)
                 .build();
     }
 
