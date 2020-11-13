@@ -13,7 +13,6 @@ import com.aws.greengrass.config.Topics;
 import com.aws.greengrass.config.WhatHappened;
 import com.aws.greengrass.dependency.ImplementsService;
 import com.aws.greengrass.dependency.State;
-import com.aws.greengrass.ipc.services.secret.SecretClientOpCodes;
 import com.aws.greengrass.lifecyclemanager.PluginService;
 import com.aws.greengrass.secretmanager.exception.NoSecretFoundException;
 import com.aws.greengrass.secretmanager.exception.SecretManagerException;
@@ -24,7 +23,6 @@ import com.aws.greengrass.secretmanager.model.v1.GetSecretValueError;
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.MapperFeature;
 import com.fasterxml.jackson.databind.ObjectMapper;
-import com.fasterxml.jackson.dataformat.cbor.databind.CBORMapper;
 import software.amazon.awssdk.aws.greengrass.GreengrassCoreIPCService;
 import software.amazon.awssdk.aws.greengrass.model.GetSecretValueResponse;
 import software.amazon.awssdk.aws.greengrass.model.ResourceNotFoundError;
@@ -34,25 +32,21 @@ import software.amazon.awssdk.aws.greengrass.model.UnauthorizedError;
 import java.io.IOException;
 import java.util.ArrayList;
 import java.util.Arrays;
-import java.util.EnumMap;
 import java.util.HashSet;
 import java.util.List;
-import java.util.Map;
 import javax.inject.Inject;
 
 import static com.aws.greengrass.componentmanager.KernelConfigResolver.CONFIGURATION_CONFIG_KEY;
+import static software.amazon.awssdk.aws.greengrass.GreengrassCoreIPCService.GET_SECRET_VALUE;
 
 @ImplementsService(name = SecretManagerService.SECRET_MANAGER_SERVICE_NAME)
 public class SecretManagerService extends PluginService {
 
     public static final String SECRET_MANAGER_SERVICE_NAME = "aws.greengrass.SecretManager";
     public static final String SECRETS_TOPIC = "cloudSecrets";
-    public static final String SECRETS_AUTHORIZATION_OPCODE = "getsecret";
-    private static final ObjectMapper CBOR_MAPPER = new CBORMapper();
     private static final ObjectMapper OBJECT_MAPPER =
             new ObjectMapper().configure(MapperFeature.ACCEPT_CASE_INSENSITIVE_PROPERTIES, true);
 
-    private static final Map<SecretClientOpCodes, String> sdkToAuthCode;
     private final SecretManager secretManager;
     private AuthorizationHandler authorizationHandler;
 
@@ -61,11 +55,6 @@ public class SecretManagerService extends PluginService {
 
     @Inject
     private GreengrassCoreIPCService greengrassCoreIPCService;
-
-    static {
-        sdkToAuthCode = new EnumMap<>(SecretClientOpCodes.class);
-        sdkToAuthCode.put(SecretClientOpCodes.GET_SECRET, SECRETS_AUTHORIZATION_OPCODE);
-    }
 
     /**
      * Constructor for SecretManagerService Service.
@@ -114,8 +103,7 @@ public class SecretManagerService extends PluginService {
     public void postInject() {
         super.postInject();
         try {
-            authorizationHandler.registerComponent(this.getName(), new HashSet<>(
-                    Arrays.asList(SECRETS_AUTHORIZATION_OPCODE)));
+            authorizationHandler.registerComponent(this.getName(), new HashSet<>(Arrays.asList(GET_SECRET_VALUE)));
         } catch (AuthorizationException e) {
             logger.atError("initialize-secret-authorization-error", e)
                     .log("Failed to initialize the secret service with the Authorization module.");
@@ -160,8 +148,7 @@ public class SecretManagerService extends PluginService {
                     .kv("secret", new String(request)).log("requested secret");
             com.aws.greengrass.secretmanager.model.v1.GetSecretValueRequest getSecretValueRequest = OBJECT_MAPPER
                     .readValue(request, com.aws.greengrass.secretmanager.model.v1.GetSecretValueRequest.class);
-            validateSecretIdAndDoAuthorization(SECRETS_AUTHORIZATION_OPCODE, serviceName,
-                    getSecretValueRequest.getSecretId());
+            validateSecretIdAndDoAuthorization(GET_SECRET_VALUE, serviceName, getSecretValueRequest.getSecretId());
             return GetSecretResponse.builder().secret(secretManager.getSecret(getSecretValueRequest)).build();
         } catch (GetSecretException t) {
             status = t.getStatus();
@@ -194,8 +181,7 @@ public class SecretManagerService extends PluginService {
     public GetSecretValueResponse handleIPCRequest(
             software.amazon.awssdk.aws.greengrass.model.GetSecretValueRequest request, String serviceName) {
         try {
-            validateSecretIdAndDoAuthorization(sdkToAuthCode.get(SecretClientOpCodes.GET_SECRET), serviceName,
-                    request.getSecretId());
+            validateSecretIdAndDoAuthorization(GET_SECRET_VALUE, serviceName, request.getSecretId());
             logger.atInfo().event("secret-access").kv("Principal", serviceName).kv("secret", request.getSecretId())
                     .log("requested secret");
             return secretManager.getSecret(request);
@@ -223,7 +209,7 @@ public class SecretManagerService extends PluginService {
                 this.getName(),
                 Permission.builder()
                         .principal(serviceName)
-                        .operation(opCode.toLowerCase())
+                        .operation(opCode)
                         .resource(secretId)
                         .build());
     }

@@ -53,6 +53,7 @@ import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.reset;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
+import static software.amazon.awssdk.aws.greengrass.GreengrassCoreIPCServiceModel.GET_SECRET_VALUE;
 
 @ExtendWith({MockitoExtension.class, GGExtension.class})
 public class SecretManagerServiceTest {
@@ -161,14 +162,14 @@ public class SecretManagerServiceTest {
         assertThat(actualResponse.getVersionStages(), hasItem(VERSION_LABEL));
         assertEquals(currentTime, actualResponse.getCreatedDate());
         assertEquals(SecretManagerService.SECRET_MANAGER_SERVICE_NAME, stringCaptor.getValue());
-        assertEquals(SecretManagerService.SECRETS_AUTHORIZATION_OPCODE, permissionCaptor.getValue().getOperation());
+        assertEquals(GET_SECRET_VALUE, permissionCaptor.getValue().getOperation());
         assertEquals(serviceName, permissionCaptor.getValue().getPrincipal());
         assertEquals(SECRET_ID, permissionCaptor.getValue().getResource());
         verify(mockAuthorizationHandler, atLeastOnce())
                 .registerComponent(SecretManagerService.SECRET_MANAGER_SERVICE_NAME,
-                        new HashSet<>(Arrays.asList(SecretManagerService.SECRETS_AUTHORIZATION_OPCODE)));
+                        new HashSet<>(Arrays.asList(GET_SECRET_VALUE)));
 
-        // Now request with secret name that maps to the arn
+        // Now request with secret name that maps to the arnGIVEN_secret_service_WHEN_v1_get_called_THEN_correct_respon
         when(mockSecretManager.validateSecretId(SECRET_NAME)).thenReturn(SECRET_ID);
         String newRequestString =
                 String.format("{\"SecretId\": \"%s\", \"VersionId\": \"%s\"}", SECRET_NAME, VERSION_ID);
@@ -330,12 +331,12 @@ public class SecretManagerServiceTest {
                 kernel.getContext().get(SecretManagerService.class).handleIPCRequest(request, serviceName);
         assertEquals(response, returnedResponse);
         assertEquals(SecretManagerService.SECRET_MANAGER_SERVICE_NAME, stringCaptor.getValue());
-        assertEquals(SecretManagerService.SECRETS_AUTHORIZATION_OPCODE, permissionCaptor.getValue().getOperation());
+        assertEquals(GET_SECRET_VALUE, permissionCaptor.getValue().getOperation());
         assertEquals(serviceName, permissionCaptor.getValue().getPrincipal());
         assertEquals(SECRET_ID, permissionCaptor.getValue().getResource());
         verify(mockAuthorizationHandler, atLeastOnce())
                 .registerComponent(SecretManagerService.SECRET_MANAGER_SERVICE_NAME,
-                        new HashSet<>(Arrays.asList(SecretManagerService.SECRETS_AUTHORIZATION_OPCODE)));
+                        new HashSet<>(Arrays.asList(GET_SECRET_VALUE)));
     }
 
     @Test
