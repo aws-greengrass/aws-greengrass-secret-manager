@@ -31,7 +31,7 @@ import software.amazon.awssdk.aws.greengrass.model.UnauthorizedError;
 
 import java.io.IOException;
 import java.util.ArrayList;
-import java.util.Arrays;
+import java.util.Collections;
 import java.util.HashSet;
 import java.util.List;
 import javax.inject.Inject;
@@ -103,7 +103,8 @@ public class SecretManagerService extends PluginService {
     public void postInject() {
         super.postInject();
         try {
-            authorizationHandler.registerComponent(this.getName(), new HashSet<>(Arrays.asList(GET_SECRET_VALUE)));
+            authorizationHandler.registerComponent(this.getName(),
+                    new HashSet<>(Collections.singletonList(GET_SECRET_VALUE)));
         } catch (AuthorizationException e) {
             logger.atError("initialize-secret-authorization-error", e)
                     .log("Failed to initialize the secret service with the Authorization module.");

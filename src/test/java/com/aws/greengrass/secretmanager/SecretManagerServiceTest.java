@@ -169,7 +169,7 @@ public class SecretManagerServiceTest {
                 .registerComponent(SecretManagerService.SECRET_MANAGER_SERVICE_NAME,
                         new HashSet<>(Arrays.asList(GET_SECRET_VALUE)));
 
-        // Now request with secret name that maps to the arnGIVEN_secret_service_WHEN_v1_get_called_THEN_correct_respon
+        // Now request with secret name that maps to the arn
         when(mockSecretManager.validateSecretId(SECRET_NAME)).thenReturn(SECRET_ID);
         String newRequestString =
                 String.format("{\"SecretId\": \"%s\", \"VersionId\": \"%s\"}", SECRET_NAME, VERSION_ID);
