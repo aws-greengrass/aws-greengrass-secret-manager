@@ -300,7 +300,7 @@ public class SecretManagerServiceTest {
         request.setVersionId(VERSION_ID);
 
         assertThrows(ServiceError.class,
-                () -> kernel.getContext().get(SecretManagerService.class).handleIPCRequest(request, serviceName));
+                () -> kernel.getContext().get(SecretManagerService.class).getSecretIPC(request, serviceName));
     }
 
 
@@ -328,7 +328,7 @@ public class SecretManagerServiceTest {
                 .thenReturn(true);
 
         GetSecretValueResponse returnedResponse =
-                kernel.getContext().get(SecretManagerService.class).handleIPCRequest(request, serviceName);
+                kernel.getContext().get(SecretManagerService.class).getSecretIPC(request, serviceName);
         assertEquals(response, returnedResponse);
         assertEquals(SecretManagerService.SECRET_MANAGER_SERVICE_NAME, stringCaptor.getValue());
         assertEquals(GET_SECRET_VALUE, permissionCaptor.getValue().getOperation());
@@ -351,7 +351,7 @@ public class SecretManagerServiceTest {
                 .thenThrow(AuthorizationException.class);
 
         assertThrows(UnauthorizedError.class,
-                () -> kernel.getContext().get(SecretManagerService.class).handleIPCRequest(request, serviceName));
+                () -> kernel.getContext().get(SecretManagerService.class).getSecretIPC(request, serviceName));
     }
 
     @Test
@@ -366,12 +366,12 @@ public class SecretManagerServiceTest {
         when(mockSecretManager.getSecret(any(software.amazon.awssdk.aws.greengrass.model.GetSecretValueRequest.class)))
                 .thenThrow(new GetSecretException(400, "getSecret Error"));
         assertThrows(ServiceError.class,
-                () -> kernel.getContext().get(SecretManagerService.class).handleIPCRequest(request, serviceName));
+                () -> kernel.getContext().get(SecretManagerService.class).getSecretIPC(request, serviceName));
 
         when(mockSecretManager.getSecret(any(software.amazon.awssdk.aws.greengrass.model.GetSecretValueRequest.class)))
                 .thenThrow(new GetSecretException(404, "secretNotFoundErr"));
         assertThrows(ResourceNotFoundError.class,
-                () -> kernel.getContext().get(SecretManagerService.class).handleIPCRequest(request, serviceName));
+                () -> kernel.getContext().get(SecretManagerService.class).getSecretIPC(request, serviceName));
     }
 
 }

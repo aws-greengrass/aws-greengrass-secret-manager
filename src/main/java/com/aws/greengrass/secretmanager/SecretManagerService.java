@@ -179,7 +179,7 @@ public class SecretManagerService extends PluginService {
      * @throws ResourceNotFoundError if requested secret is not found locally
      * @throws ServiceError          if kernel encountered errors while processing this request
      */
-    public GetSecretValueResponse handleIPCRequest(
+    public GetSecretValueResponse getSecretIPC(
             software.amazon.awssdk.aws.greengrass.model.GetSecretValueRequest request, String serviceName) {
         try {
             validateSecretIdAndDoAuthorization(GET_SECRET_VALUE, serviceName, request.getSecretId());
