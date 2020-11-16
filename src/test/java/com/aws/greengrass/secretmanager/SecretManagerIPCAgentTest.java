@@ -70,10 +70,10 @@ public class SecretManagerIPCAgentTest {
         expectedResponse.setSecretValue(secretValue);
         expectedResponse.setVersionId(VERSION_ID);
 
-        when(mockSecretManagerService.handleIPCRequest(any(), any())).thenReturn(expectedResponse);
+        when(mockSecretManagerService.getSecretIPC(any(), any())).thenReturn(expectedResponse);
         GetSecretValueResponse actualResponse =
                 secretManagerIPCAgent.getSecretValueOperationHandler(mockContext).handleRequest(request);
-        verify(mockSecretManagerService).handleIPCRequest(getSecretValueRequestArgumentCaptor.capture(),
+        verify(mockSecretManagerService).getSecretIPC(getSecretValueRequestArgumentCaptor.capture(),
                 stringArgumentCaptor.capture());
         assertEquals(TEST_SERVICE, stringArgumentCaptor.getValue());
         assertEquals(request, getSecretValueRequestArgumentCaptor.getValue());
