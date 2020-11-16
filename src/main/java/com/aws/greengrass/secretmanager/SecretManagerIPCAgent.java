@@ -47,7 +47,7 @@ public class SecretManagerIPCAgent {
         @Override
         public GetSecretValueResponse handleRequest(GetSecretValueRequest request) {
             logger.atDebug("ipc-get-secret-request").log();
-            return secretManagerService.handleIPCRequest(request, serviceName);
+            return secretManagerService.getSecretIPC(request, serviceName);
         }
 
         @Override

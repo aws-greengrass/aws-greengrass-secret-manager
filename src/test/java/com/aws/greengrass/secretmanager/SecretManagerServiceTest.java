@@ -53,6 +53,7 @@ import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.reset;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
+import static software.amazon.awssdk.aws.greengrass.GreengrassCoreIPCServiceModel.GET_SECRET_VALUE;
 
 @ExtendWith({MockitoExtension.class, GGExtension.class})
 public class SecretManagerServiceTest {
@@ -161,12 +162,12 @@ public class SecretManagerServiceTest {
         assertThat(actualResponse.getVersionStages(), hasItem(VERSION_LABEL));
         assertEquals(currentTime, actualResponse.getCreatedDate());
         assertEquals(SecretManagerService.SECRET_MANAGER_SERVICE_NAME, stringCaptor.getValue());
-        assertEquals(SecretManagerService.SECRETS_AUTHORIZATION_OPCODE, permissionCaptor.getValue().getOperation());
+        assertEquals(GET_SECRET_VALUE, permissionCaptor.getValue().getOperation());
         assertEquals(serviceName, permissionCaptor.getValue().getPrincipal());
         assertEquals(SECRET_ID, permissionCaptor.getValue().getResource());
         verify(mockAuthorizationHandler, atLeastOnce())
                 .registerComponent(SecretManagerService.SECRET_MANAGER_SERVICE_NAME,
-                        new HashSet<>(Arrays.asList(SecretManagerService.SECRETS_AUTHORIZATION_OPCODE)));
+                        new HashSet<>(Arrays.asList(GET_SECRET_VALUE)));
 
         // Now request with secret name that maps to the arn
         when(mockSecretManager.validateSecretId(SECRET_NAME)).thenReturn(SECRET_ID);
@@ -299,7 +300,7 @@ public class SecretManagerServiceTest {
         request.setVersionId(VERSION_ID);
 
         assertThrows(ServiceError.class,
-                () -> kernel.getContext().get(SecretManagerService.class).handleIPCRequest(request, serviceName));
+                () -> kernel.getContext().get(SecretManagerService.class).getSecretIPC(request, serviceName));
     }
 
 
@@ -327,15 +328,15 @@ public class SecretManagerServiceTest {
                 .thenReturn(true);
 
         GetSecretValueResponse returnedResponse =
-                kernel.getContext().get(SecretManagerService.class).handleIPCRequest(request, serviceName);
+                kernel.getContext().get(SecretManagerService.class).getSecretIPC(request, serviceName);
         assertEquals(response, returnedResponse);
         assertEquals(SecretManagerService.SECRET_MANAGER_SERVICE_NAME, stringCaptor.getValue());
-        assertEquals(SecretManagerService.SECRETS_AUTHORIZATION_OPCODE, permissionCaptor.getValue().getOperation());
+        assertEquals(GET_SECRET_VALUE, permissionCaptor.getValue().getOperation());
         assertEquals(serviceName, permissionCaptor.getValue().getPrincipal());
         assertEquals(SECRET_ID, permissionCaptor.getValue().getResource());
         verify(mockAuthorizationHandler, atLeastOnce())
                 .registerComponent(SecretManagerService.SECRET_MANAGER_SERVICE_NAME,
-                        new HashSet<>(Arrays.asList(SecretManagerService.SECRETS_AUTHORIZATION_OPCODE)));
+                        new HashSet<>(Arrays.asList(GET_SECRET_VALUE)));
     }
 
     @Test
@@ -350,7 +351,7 @@ public class SecretManagerServiceTest {
                 .thenThrow(AuthorizationException.class);
 
         assertThrows(UnauthorizedError.class,
-                () -> kernel.getContext().get(SecretManagerService.class).handleIPCRequest(request, serviceName));
+                () -> kernel.getContext().get(SecretManagerService.class).getSecretIPC(request, serviceName));
     }
 
     @Test
@@ -365,12 +366,12 @@ public class SecretManagerServiceTest {
         when(mockSecretManager.getSecret(any(software.amazon.awssdk.aws.greengrass.model.GetSecretValueRequest.class)))
                 .thenThrow(new GetSecretException(400, "getSecret Error"));
         assertThrows(ServiceError.class,
-                () -> kernel.getContext().get(SecretManagerService.class).handleIPCRequest(request, serviceName));
+                () -> kernel.getContext().get(SecretManagerService.class).getSecretIPC(request, serviceName));
 
         when(mockSecretManager.getSecret(any(software.amazon.awssdk.aws.greengrass.model.GetSecretValueRequest.class)))
                 .thenThrow(new GetSecretException(404, "secretNotFoundErr"));
         assertThrows(ResourceNotFoundError.class,
-                () -> kernel.getContext().get(SecretManagerService.class).handleIPCRequest(request, serviceName));
+                () -> kernel.getContext().get(SecretManagerService.class).getSecretIPC(request, serviceName));
     }
 
 }
