@@ -81,8 +81,9 @@ jobs:
         run: mvn -ntp --settings settings.xml deploy -DskipTests -Dstargate-snapshot-repository-url=${{ secrets.stargate_dev_snapshot_repository_url }}
       - run: sudo apt-get install -y awscli
       - name: Upload to S3
-        run: aws s3 cp target/SecretManager.jar s3://greengrass-artifacts-releases/${{github.repository}}/${{github.ref}}/greengrass-secret-manager-${{github.sha}}.jar 
-        run: aws s3 cp target/SecretManager.jar s3://gg-evergreen-releases/${{github.repository}}/${{github.ref}}/evergreen-secret-manager-${{github.sha}}.jar
+        run: |
+          aws s3 cp target/SecretManager.jar s3://greengrass-artifacts-releases/${{github.repository}}/${{github.ref}}/greengrass-secret-manager-${{github.sha}}.jar 
+          aws s3 cp target/SecretManager.jar s3://gg-evergreen-releases/${{github.repository}}/${{github.ref}}/evergreen-secret-manager-${{github.sha}}.jar
       - run: mkdir -p target/artifacts && cp target/SecretManager.jar target/artifacts/aws.greengrass.SecretManager.jar
       - uses: ./.github/actions/aws-greengrass-component-upload-action
         name: Upload to GCS Gamma
