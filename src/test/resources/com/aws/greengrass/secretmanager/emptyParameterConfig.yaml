@@ -8,6 +8,4 @@ services:
       - aws.greengrass.SecretManager
 
   aws.greengrass.SecretManager:
-    #TODO: remove after parameters -> configuration switch over
-    parameters: {}
     configuration: {}
