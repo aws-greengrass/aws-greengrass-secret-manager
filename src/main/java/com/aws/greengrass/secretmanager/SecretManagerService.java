@@ -17,9 +17,10 @@ import com.aws.greengrass.lifecyclemanager.PluginService;
 import com.aws.greengrass.secretmanager.exception.NoSecretFoundException;
 import com.aws.greengrass.secretmanager.exception.SecretManagerException;
 import com.aws.greengrass.secretmanager.exception.v1.GetSecretException;
-import com.aws.greengrass.secretmanager.model.GetSecretResponse;
 import com.aws.greengrass.secretmanager.model.SecretConfiguration;
 import com.aws.greengrass.secretmanager.model.v1.GetSecretValueError;
+import com.aws.greengrass.secretmanager.model.v1.GetSecretValueResult;
+import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.MapperFeature;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -41,7 +42,6 @@ import static software.amazon.awssdk.aws.greengrass.GreengrassCoreIPCService.GET
 
 @ImplementsService(name = SecretManagerService.SECRET_MANAGER_SERVICE_NAME)
 public class SecretManagerService extends PluginService {
-
     public static final String SECRET_MANAGER_SERVICE_NAME = "aws.greengrass.SecretManager";
     public static final String SECRETS_TOPIC = "cloudSecrets";
     private static final ObjectMapper OBJECT_MAPPER =
@@ -139,34 +139,62 @@ public class SecretManagerService extends PluginService {
      * Handles secret API calls from lambda-manager for v1 style lambdas.
      * @param serviceName  Lambda component name requesting the secret.
      * @param request      v1 style get secret request
-     * @return secret      v1 style secret response
+     * @return v1 style secret or error serialized as JSON bytes. If a serialization error occurs, null is returned.
      */
-    public GetSecretResponse getSecret(String serviceName, byte[] request) {
+    public byte[] getSecret(String serviceName, byte[] request) {
+        logger.atInfo().event("secret-access")
+                .kv("Principal", serviceName)
+                .kv("secret", new String(request))
+                .log("requested secret");
+
         int status;
         String message = null;
+
         try {
-            logger.atInfo().event("secret-access").kv("Principal", serviceName)
-                    .kv("secret", new String(request)).log("requested secret");
-            com.aws.greengrass.secretmanager.model.v1.GetSecretValueRequest getSecretValueRequest = OBJECT_MAPPER
-                    .readValue(request, com.aws.greengrass.secretmanager.model.v1.GetSecretValueRequest.class);
+            com.aws.greengrass.secretmanager.model.v1.GetSecretValueRequest getSecretValueRequest =
+                    OBJECT_MAPPER.readValue(request,
+                            com.aws.greengrass.secretmanager.model.v1.GetSecretValueRequest.class);
             validateSecretIdAndDoAuthorization(GET_SECRET_VALUE, serviceName, getSecretValueRequest.getSecretId());
-            return GetSecretResponse.builder().secret(secretManager.getSecret(getSecretValueRequest)).build();
-        } catch (GetSecretException t) {
-            status = t.getStatus();
-            message = t.getMessage();
+            GetSecretValueResult response = secretManager.getSecret(getSecretValueRequest);
+
+            try {
+                return OBJECT_MAPPER.writeValueAsBytes(response);
+            } catch (JsonProcessingException e) {
+                // not logging exception in case it outputs secret value
+                logger.atError().event("secret-access")
+                        .kv("Principal", serviceName).kv("secret", new String(request))
+                        .log("Error serializing secret");
+                return null;
+            }
+        } catch (IOException e) {
+            status = 400;
+            message = "Unable to parse request";
         } catch (AuthorizationException t) {
             status = 403;
             message = t.getMessage();
-        } catch (IOException t) {
-            status = 400;
-            message = "Unable to parse request";
+        } catch (GetSecretException t) {
+            status = t.getStatus();
+            message = t.getMessage();
         } catch (Throwable t) {
             status = 500;
             message = t.getMessage();
-            logger.atError().event("secret-access-error").setCause(t).log("Error getting secret");
+            logger.atError().event("secret-access").setCause(t)
+                    .kv("Principal", serviceName).kv("secret", new String(request))
+                    .log("Error getting secret");
         }
-        return GetSecretResponse.builder().error(GetSecretValueError.builder().status(status).message(message)
-                .build()).build();
+
+        try {
+            return OBJECT_MAPPER.writeValueAsBytes(GetSecretValueError.builder().status(status).message(message)
+                    .build());
+        } catch (JsonProcessingException e) {
+            logger.atError().event("secret-access").setCause(e)
+                    .kv("Principal", serviceName)
+                    .kv("secret", new String(request))
+                    .kv("status", status)
+                    .kv("message", message)
+                    .log("Error serializing error response");
+            return null;
+        }
     }
 
     /**
