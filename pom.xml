@@ -9,6 +9,13 @@
          xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/xsd/maven-4.0.0.xsd">
     <modelVersion>4.0.0</modelVersion>
 
+    <licenses>
+      <license>
+        <name>Apache License, Version 2.0</name>
+        <url>https://www.apache.org/licenses/LICENSE-2.0.txt</url>
+      </license>
+    </licenses>
+
     <groupId>com.aws.greengrass</groupId>
     <artifactId>secretmanager</artifactId>
     <packaging>jar</packaging>
