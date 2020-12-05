@@ -249,12 +249,14 @@ public class SecretManager {
 
     private GetSecretValueResponse getSecret(String secretId, String versionId, String versionStage)
         throws GetSecretException {
-        logger.atDebug("get-secret").kv("secretId", secretId).kv("versionId", versionId)
-                .kv("versionStage", versionStage).log();
+        logger.atDebug().kv("secretId", secretId).kv("versionId", versionId)
+                .kv("versionStage", versionStage).log("get-secret");
         String arn = validateSecretId(secretId);
 
         // Both are optional
         if (!Utils.isEmpty(versionId) && !Utils.isEmpty(versionStage)) {
+            logger.atError().kv("secretId", secretId).kv("versionId", versionId)
+                    .kv("versionStage", versionStage).log("Both secret version and id are set");
             throw new GetSecretException(400,
                     "Both versionId and Stage are set in the request");
         }
@@ -262,6 +264,7 @@ public class SecretManager {
         if (!Utils.isEmpty(versionId)) {
             if (!cache.containsKey(arn + versionId)) {
                 String errorStr = "Version Id " + versionId + " not found for secret " + secretId;
+                logger.atError().kv("secretId", secretId).log(errorStr);
                 throw new GetSecretException(404, errorStr);
             }
             return cache.get(arn + versionId);
@@ -270,12 +273,14 @@ public class SecretManager {
         if (!Utils.isEmpty(versionStage)) {
             if (!cache.containsKey(arn + versionStage)) {
                 String errorStr = "Version stage " + versionStage + " not found for secret " + secretId;
+                logger.atError().kv("secretId", secretId).log(errorStr);
                 throw new GetSecretException(404, errorStr);
             }
             return cache.get(arn + versionStage);
         }
         // If none of the label and version are specified then return LATEST_LABEL
         if (!cache.containsKey((arn + LATEST_LABEL))) {
+            logger.atError().kv("secretId", secretId).log(secretNotFoundErr);
             throw new GetSecretException(404, secretNotFoundErr + secretId);
         }
         return cache.get(arn + LATEST_LABEL);
