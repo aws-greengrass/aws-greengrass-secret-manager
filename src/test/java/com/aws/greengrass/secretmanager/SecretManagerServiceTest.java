@@ -293,6 +293,7 @@ public class SecretManagerServiceTest {
     @Test
     void GIVEN_secret_service_WHEN_request_invalid_THEN_correct_response_returned(ExtensionContext context)
             throws Exception {
+        ignoreExceptionOfType(context, GetSecretException.class);
         startKernelWithConfig("config.yaml", State.RUNNING);
         final String serviceName = "mockService";
         when(mockSecretManager.validateSecretId(SECRET_ID)).thenThrow(GetSecretException.class);
@@ -358,7 +359,9 @@ public class SecretManagerServiceTest {
     }
 
     @Test
-    void GIVEN_secret_service_WHEN_ipc_request_get_secret_errors_THEN_throw_error() throws Exception {
+    void GIVEN_secret_service_WHEN_ipc_request_get_secret_errors_THEN_throw_error(ExtensionContext context)
+            throws Exception {
+        ignoreExceptionOfType(context, GetSecretException.class);
         startKernelWithConfig("config.yaml", State.RUNNING);
         final String serviceName = "mockService";
         software.amazon.awssdk.aws.greengrass.model.GetSecretValueRequest request =
