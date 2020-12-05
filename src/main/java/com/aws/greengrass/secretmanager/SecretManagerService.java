@@ -217,6 +217,8 @@ public class SecretManagerService extends PluginService {
         } catch (AuthorizationException e) {
             throw new UnauthorizedError(e.getMessage());
         } catch (GetSecretException e) {
+            logger.atError().event("secret-access").kv("Principal", serviceName).kv("secret", request.getSecretId())
+                    .setCause(e).log("Error happened with secret access");
             if (e.getStatus() == 404) {
                 ResourceNotFoundError rnf = new ResourceNotFoundError();
                 rnf.setMessage(e.getMessage());
