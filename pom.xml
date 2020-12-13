@@ -235,7 +235,7 @@
         <snapshotRepository>
             <id>greengrass-dev-snapshot</id>
             <name>greengrass Dev Snapshot</name>
-            <url>${stargate-snapshot-repository-url}</url>
+            <url>${dev-snapshot-repository-url}</url>
         </snapshotRepository>
     </distributionManagement>
     <properties>
