@@ -67,13 +67,17 @@ class SecretManagerTest {
     private static final String LATEST_LABEL = "AWSCURRENT";
     private static final String SECRET_NAME_1 = "Secret1";
     private static final String SECRET_NAME_2 = "Secret2";
+    private static final String SECRET_NAME_3 = "Secret3";
 
     private static final String SECRET_VALUE_1 = "password";
     private static final String SECRET_VALUE_2 = "newPassword";
+    private static final String SECRET_VALUE_3 = "otherPassword";
     private static final byte[] SECRET_VALUE_BINARY_1 = SECRET_VALUE_1.getBytes();
     private static final byte[] SECRET_VALUE_BINARY_2 = SECRET_VALUE_2.getBytes();
+    private static final byte[] SECRET_VALUE_BINARY_3 = SECRET_VALUE_3.getBytes();
     private static final String SECRET_VERSION_1 = UUID.randomUUID().toString();
     private static final String SECRET_VERSION_2 = UUID.randomUUID().toString();
+    private static final String SECRET_VERSION_3 = UUID.randomUUID().toString();
     private static final String SECRET_LABEL_1 = "Label1";
     private static final String SECRET_LABEL_2 = "Label2";
     private static final Instant SECRET_DATE_1 = Instant.now();
@@ -81,11 +85,14 @@ class SecretManagerTest {
 
     private static final String ARN_1 = "arn:aws:secretsmanager:us-east-1:999936977227:secret:randomSecret-74lYJh";
     private static final String ARN_2 = "arn:aws:secretsmanager:us-east-1:111136977227:secret:shhhhh-32lYsd";
+    private static final String ARN_3 = "arn:aws-us-gov:secretsmanager:us-east-1:111136977227:secret:shhhhh-32lYsd";
 
     private String ENCRYPTED_SECRET_1;
     private String ENCRYPTED_SECRET_2;
+    private String ENCRYPTED_SECRET_3;
     private String ENCRYPTED_SECRET_BINARY_1;
     private String ENCRYPTED_SECRET_BINARY_2;
+    private String ENCRYPTED_SECRET_BINARY_3;
     private Crypter crypter;
 
     @Mock
@@ -107,9 +114,11 @@ class SecretManagerTest {
         SecretConfiguration secret1 = SecretConfiguration.builder().arn(ARN_1).build();
         SecretConfiguration secret2 = SecretConfiguration.builder().arn(ARN_2)
                 .labels(Arrays.asList(new String[]{LATEST_LABEL, SECRET_LABEL_1})).build();
+        SecretConfiguration secret3 = SecretConfiguration.builder().arn(ARN_3).build();
         return new ArrayList() {{
             add(secret1);
             add(secret2);
+            add(secret3);
         }};
     }
 
@@ -133,8 +142,11 @@ class SecretManagerTest {
                 .encodeToString(crypter.encrypt(SECRET_VALUE_1.getBytes(StandardCharsets.UTF_8), ARN_1));
         ENCRYPTED_SECRET_2 = Base64.getEncoder()
                 .encodeToString(crypter.encrypt(SECRET_VALUE_2.getBytes(StandardCharsets.UTF_8), ARN_2));
+        ENCRYPTED_SECRET_3 = Base64.getEncoder()
+                .encodeToString(crypter.encrypt(SECRET_VALUE_3.getBytes(StandardCharsets.UTF_8), ARN_3));
         ENCRYPTED_SECRET_BINARY_1 = Base64.getEncoder().encodeToString(crypter.encrypt(SECRET_VALUE_BINARY_1, ARN_1));
         ENCRYPTED_SECRET_BINARY_2 = Base64.getEncoder().encodeToString(crypter.encrypt(SECRET_VALUE_BINARY_2, ARN_2));
+        ENCRYPTED_SECRET_BINARY_3 = Base64.getEncoder().encodeToString(crypter.encrypt(SECRET_VALUE_BINARY_3, ARN_3));
     }
 
     private GetSecretValueResponse getMockSecret(String name, String arn, Instant date, String secretString,
@@ -169,6 +181,11 @@ class SecretManagerTest {
                 Arrays.asList(new String[]{LATEST_LABEL, SECRET_LABEL_2}));
     }
 
+    private GetSecretValueResponse getMockSecretCWithSecretBinary() {
+        return getMockSecret(SECRET_NAME_3, ARN_3, SECRET_DATE_2, null, SECRET_VALUE_BINARY_3, SECRET_VERSION_3,
+                Arrays.asList(new String[]{LATEST_LABEL, SECRET_LABEL_2}));
+    }
+
     private AWSSecretResponse getMockDaoSecretA() {
         return AWSSecretResponse.builder().name(SECRET_NAME_1).arn(ARN_1).createdDate(SECRET_DATE_1.toEpochMilli())
                 .encryptedSecretString(ENCRYPTED_SECRET_1).encryptedSecretBinary(ENCRYPTED_SECRET_BINARY_1)
@@ -197,13 +214,23 @@ class SecretManagerTest {
                 .build();
     }
 
+    private AWSSecretResponse getMockDaoSecretCWithSecretBinary() {
+        return AWSSecretResponse.builder().name(SECRET_NAME_3).arn(ARN_3).createdDate(SECRET_DATE_2.toEpochMilli())
+                .encryptedSecretBinary(ENCRYPTED_SECRET_BINARY_3)
+                .versionStages(Arrays.asList(new String[]{LATEST_LABEL, SECRET_LABEL_2})).versionId(SECRET_VERSION_2)
+                .build();
+    }
+
     @Test
     void GIVEN_cloud_secret_WHEN_binary_secret_set_THEN_only_binary_returned() throws Exception {
-        when(mockAWSSecretClient.getSecret(any())).thenReturn(getMockSecretAWithSecretString())
-                .thenReturn(getMockSecretBWithSecretBinary());
+        when(mockAWSSecretClient.getSecret(any()))
+                .thenReturn(getMockSecretAWithSecretString())
+                .thenReturn(getMockSecretBWithSecretBinary())
+                .thenReturn(getMockSecretCWithSecretBinary());
         List<AWSSecretResponse> storedSecrets = new ArrayList<>();
         storedSecrets.add(getMockDaoSecretAWithSecretString());
         storedSecrets.add(getMockDaoSecretBWithSecretBinary());
+        storedSecrets.add(getMockDaoSecretCWithSecretBinary());
         when(mockDao.getAll()).thenReturn(SecretDocument.builder().secrets(storedSecrets).build());
         SecretManager sm = new SecretManager(mockAWSSecretClient, crypter, mockDao);
         sm.syncFromCloud(getMockSecrets());
@@ -222,6 +249,13 @@ class SecretManagerTest {
 
         assertNull(getSecretValueResult.getSecretValue().getSecretString());
         assertArrayEquals(SECRET_VALUE_BINARY_2, getSecretValueResult.getSecretValue().getSecretBinary());
+
+        request = new software.amazon.awssdk.aws.greengrass.model.GetSecretValueRequest();
+        request.setSecretId(SECRET_NAME_3);
+        getSecretValueResult = sm.getSecret(request);
+
+        assertNull(getSecretValueResult.getSecretValue().getSecretString());
+        assertArrayEquals(SECRET_VALUE_BINARY_3, getSecretValueResult.getSecretValue().getSecretBinary());
     }
 
     @Test
@@ -602,13 +636,15 @@ class SecretManagerTest {
 
         List<software.amazon.awssdk.services.secretsmanager.model.GetSecretValueRequest> awsRequests =
                 awsClientRequestCaptor.getAllValues();
-        assertEquals(3, awsRequests.size());
+        assertEquals(4, awsRequests.size());
         assertEquals(LATEST_LABEL, awsRequests.get(0).versionStage());
         assertEquals(ARN_1, awsRequests.get(0).secretId());
         assertEquals(SECRET_LABEL_1, awsRequests.get(1).versionStage());
         assertEquals(ARN_2, awsRequests.get(2).secretId());
         assertEquals(LATEST_LABEL, awsRequests.get(2).versionStage());
         assertEquals(ARN_2, awsRequests.get(2).secretId());
+        assertEquals(LATEST_LABEL, awsRequests.get(3).versionStage());
+        assertEquals(ARN_3, awsRequests.get(3).secretId());
     }
 
     @Test
