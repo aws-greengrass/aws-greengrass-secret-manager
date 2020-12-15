@@ -1,9 +1,7 @@
 ## Secret Manager
 
-Secret Manager is a Greengrass component that manages sensitive data stored with Greengrass. Today it only
- supports secrets stored in AWS Secrets Manager. It also provides API's for components to fetch secrets
- locally. It provides backward compatible v1 secret API's for lambda components as well. Secret Manager
- component is optional and runs in the same JVM as the [Greengrass Nucleus](https://github.com/aws/aws-greengrass-nucleus).
+Secret Manager is a Greengrass component that manages sensitive data stored with Greengrass. It supports secrets stored in AWS Secrets Manager and provides APIs for
+components to fetch secrets locally. It also provides backward compatible v1 secret APIs for lambda components. The secret manager component is optional and runs in the same JVM as the [Greengrass Nucleus](https://github.com/aws-greengrass/aws-greengrass-nucleus).
 
  ## FAQ
 
