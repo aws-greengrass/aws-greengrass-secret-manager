@@ -51,7 +51,7 @@ public final class Crypter {
                 throw new SecretCryptoException("Empty input payload provided");
             }
             List<JceMasterKey> keyList = keyChain.getKeyProviders();
-            AwsCrypto awsCrypto = new AwsCrypto();
+            AwsCrypto awsCrypto = AwsCrypto.builder().build();
             final MasterKeyProvider<?> provider = MultipleProviderFactory.buildMultiProvider(keyList);
             final CryptoResult<byte[], ?> decryptResult = awsCrypto.decryptData(provider, payload);
             byte[] decryptedPayload = decryptResult.getResult();
@@ -85,7 +85,7 @@ public final class Crypter {
             }
             // masterKey cannot be null as keychain is add only and empty key chain is not allowed.
             JceMasterKey masterKey = keyChain.getMasterKey();
-            final AwsCrypto awsCrypto = new AwsCrypto();
+            final AwsCrypto awsCrypto = AwsCrypto.builder().build();
             final Map<String, String> encryptionContext = Collections.singletonMap(CONTEXT_STR, context);
             final CryptoResult<byte[], ?> encryptionResult =
                     awsCrypto.encryptData(masterKey, plainText, encryptionContext);

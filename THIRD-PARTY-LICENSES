@@ -1,4 +1,4 @@
-** aws-encryption-sdk-java; version 1.6.2 --
+** aws-encryption-sdk-java; version 2.0.0 --
 https://docs.aws.amazon.com/encryption-sdk/latest/developer-guide/introduction.html
 ** aws-java-sdk 2.10.89; version 2.10.89 --
 https://aws.amazon.com/sdk-for-java/
@@ -234,11 +234,11 @@ THE SOFTWARE.
 
 ------
 
-** BouncyCastle 1.66; version 1.66 -- https://www.bouncycastle.org/java.html
-Copyright (c) 2000-2020 The Legion of the Bouncy Castle Inc.
+** BouncyCastle 1.68; version 1.68 -- https://www.bouncycastle.org/java.html
+Copyright (c) 2000-2021 The Legion of the Bouncy Castle Inc.
 (http://www.bouncycastle.org)
 
-Copyright (c) 2000-2020 The Legion of the Bouncy Castle Inc.
+Copyright (c) 2000-2021 The Legion of the Bouncy Castle Inc.
 (http://www.bouncycastle.org)
 
 Permission is hereby granted, free of charge, to any person obtaining a copy of
