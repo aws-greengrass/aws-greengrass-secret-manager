@@ -69,9 +69,6 @@ public class SecretManagerService extends PluginService {
         super(topics);
         this.secretManager = secretManager;
         this.authorizationHandler = authorizationHandler;
-        // GG_NEEDS_REVIEW: TODO: Subscribe on thing key updates
-        topics.lookup(CONFIGURATION_CONFIG_KEY, SECRETS_TOPIC)
-                .subscribe(this::serviceChanged);
     }
 
     private void serviceChanged(WhatHappened whatHappened, Topic secretParam) {
@@ -117,6 +114,10 @@ public class SecretManagerService extends PluginService {
 
     @Override
     public void startup() {
+        // subscribe will invoke serviceChanged right away to sync from cloud
+        // GG_NEEDS_REVIEW: TODO: Subscribe on thing key updates
+        this.config.lookup(CONFIGURATION_CONFIG_KEY, SECRETS_TOPIC).subscribe(this::serviceChanged);
+
         // GG_NEEDS_REVIEW: TODO: Modify secret service to only provide interface to deal with downloaded
         // secrets during download phase.
 
