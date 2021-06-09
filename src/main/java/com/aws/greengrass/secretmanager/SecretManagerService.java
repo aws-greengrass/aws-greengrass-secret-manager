@@ -87,8 +87,8 @@ public class SecretManagerService extends PluginService {
                 logger.atError().kv("secrets", secretParam.toString()).log("Unable to parse secrets configured");
             }
         } catch (IllegalArgumentException e) {
-            logger.atError().kv("node", secretParam.getFullName()).kv("value", secretParam).setCause(e)
-                    .log("Unable to parse secrets configured");
+            logger.atError().kv("node", secretParam == null ? null : secretParam.getFullName()).kv("value", secretParam)
+                    .setCause(e).log("Unable to parse secrets configured");
         } catch (SecretManagerException e) {
             logger.atWarn().kv("service", SECRET_MANAGER_SERVICE_NAME).setCause(e)
                     .log("Unable to download secrets from cloud");
