@@ -9,22 +9,34 @@ on:
 
 jobs:
   build:
-    runs-on: ubuntu-latest
+    runs-on: ${{ matrix.os }}
+    strategy:
+      matrix:
+        os: [ubuntu-latest, windows-latest]
     steps:
       - uses: actions/checkout@v2
         with:
           fetch-depth: 0
       - uses: wagoid/commitlint-github-action@v2
+        if: matrix.os == 'ubuntu-latest'
       - name: Set up JDK 1.8
         uses: actions/setup-java@v1
         with:
           java-version: 1.8
       - run: rm -rf /tmp/*
+        if: matrix.os == 'ubuntu-latest'
         continue-on-error: true
-      - name: Build with Maven
+      - name: Build with Maven (not Windows)
         env:
           AWS_REGION: us-west-2
         run: mvn -ntp -U clean verify
+        if: matrix.os != 'windows-latest'
+      - name: Build with Maven (Windows)
+        env:
+          AWS_REGION: us-west-2
+        run: mvn -ntp -U clean verify
+        shell: cmd
+        if: matrix.os == 'windows-latest'
       - name: Upload Failed Test Report
         uses: actions/upload-artifact@v1.0.0
         if: failure()
@@ -33,13 +45,15 @@ jobs:
           path: target/surefire-reports
       - name: Upload Coverage
         uses: actions/upload-artifact@v1.0.0
-        if: always()
+        if: matrix.os == 'ubuntu-latest'
         with:
-          name: Coverage Report
+          name: Coverage Report ${{ matrix.os }}
           path: target/jacoco-report
       - name: Convert Jacoco unit test report to Cobertura
         run: python3 .github/scripts/cover2cover.py target/jacoco-report/jacoco.xml src/main/java > target/jacoco-report/cobertura.xml
+        if: matrix.os == 'ubuntu-latest'
       - name: cobertura-report-unit-test
+        if: matrix.os == 'ubuntu-latest'
         uses: shaguptashaikh/cobertura-action@master
         continue-on-error: true
         with:
