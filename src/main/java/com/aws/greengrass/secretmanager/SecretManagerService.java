@@ -15,6 +15,7 @@ import com.aws.greengrass.dependency.ImplementsService;
 import com.aws.greengrass.dependency.State;
 import com.aws.greengrass.lifecyclemanager.PluginService;
 import com.aws.greengrass.secretmanager.exception.NoSecretFoundException;
+import com.aws.greengrass.secretmanager.exception.SecretCryptoException;
 import com.aws.greengrass.secretmanager.exception.SecretManagerException;
 import com.aws.greengrass.secretmanager.exception.v1.GetSecretException;
 import com.aws.greengrass.secretmanager.model.SecretConfiguration;
@@ -35,6 +36,10 @@ import java.util.ArrayList;
 import java.util.Collections;
 import java.util.HashSet;
 import java.util.List;
+import java.util.concurrent.ExecutionException;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Future;
+import java.util.concurrent.atomic.AtomicReference;
 import javax.inject.Inject;
 
 import static com.aws.greengrass.componentmanager.KernelConfigResolver.CONFIGURATION_CONFIG_KEY;
@@ -48,7 +53,9 @@ public class SecretManagerService extends PluginService {
             new ObjectMapper().configure(MapperFeature.ACCEPT_CASE_INSENSITIVE_PROPERTIES, true);
 
     private final SecretManager secretManager;
-    private AuthorizationHandler authorizationHandler;
+    private final AuthorizationHandler authorizationHandler;
+    private final ExecutorService executor;
+    private final AtomicReference<Future<?>> syncFuture = new AtomicReference<Future<?>>(null);
 
     @Inject
     SecretManagerIPCAgent secretManagerIPCAgent;
@@ -61,25 +68,29 @@ public class SecretManagerService extends PluginService {
      * @param topics                root Configuration topic for this service
      * @param secretManager         secret manager which manages secrets
      * @param authorizationHandler  authorization handler
+     * @param executorService       executor service
      */
     @Inject
     public SecretManagerService(Topics topics,
                                 SecretManager secretManager,
-                                AuthorizationHandler authorizationHandler) {
+                                AuthorizationHandler authorizationHandler,
+                                ExecutorService executorService) {
         super(topics);
         this.secretManager = secretManager;
         this.authorizationHandler = authorizationHandler;
+        this.executor = executorService;
     }
 
-    private void serviceChanged(WhatHappened whatHappened, Topic secretParam) {
+    private void syncFromCloud() throws SecretManagerException, InterruptedException {
+        Topic secretParam = this.config.lookup(CONFIGURATION_CONFIG_KEY, SECRETS_TOPIC);
         try {
             if (secretParam == null) {
                 logger.atInfo().kv("service", SECRET_MANAGER_SERVICE_NAME).log("No secrets configured");
                 secretManager.syncFromCloud(new ArrayList<>());
                 return;
             }
-            List<SecretConfiguration> configuredSecrets =
-                    OBJECT_MAPPER.convertValue(secretParam.toPOJO(), new TypeReference<List<SecretConfiguration>>() {
+            List<SecretConfiguration> configuredSecrets = OBJECT_MAPPER.convertValue(secretParam.toPOJO(),
+                    new TypeReference<List<SecretConfiguration>>() {
                     });
             if (configuredSecrets != null) {
                 secretManager.syncFromCloud(configuredSecrets);
@@ -87,13 +98,35 @@ public class SecretManagerService extends PluginService {
                 logger.atError().kv("secrets", secretParam.toString()).log("Unable to parse secrets configured");
             }
         } catch (IllegalArgumentException e) {
-            logger.atError().kv("node", secretParam == null ? null : secretParam.getFullName()).kv("value", secretParam)
-                    .setCause(e).log("Unable to parse secrets configured");
-        } catch (SecretManagerException e) {
-            logger.atWarn().kv("service", SECRET_MANAGER_SERVICE_NAME).setCause(e)
-                    .log("Unable to download secrets from cloud");
-            serviceErrored(e);
+            logger.atError().kv("node", secretParam == null ? null : secretParam.getFullName())
+                    .kv("value", secretParam).setCause(e).log("Unable to parse secrets configured");
         }
+    }
+
+    private void serviceChanged(WhatHappened w, Topic t) {
+        if (WhatHappened.timestampUpdated.equals(w)) {
+            return;
+        }
+        replaceSyncFuture(() -> {
+            try {
+                this.syncFromCloud();
+            } catch (SecretManagerException e) {
+                logger.atWarn().kv("service", SECRET_MANAGER_SERVICE_NAME).setCause(e)
+                        .log("Unable to download secrets from cloud");
+                serviceErrored(e);
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+            }
+        });
+    }
+
+    private synchronized Future<?> replaceSyncFuture(Runnable r) {
+        Future<?> newFut = r == null ? null : executor.submit(r);
+        Future<?> oldFut = syncFuture.getAndSet(newFut);
+        if (oldFut != null) {
+            oldFut.cancel(true);
+        }
+        return newFut;
     }
 
     @Override
@@ -113,7 +146,14 @@ public class SecretManagerService extends PluginService {
     }
 
     @Override
-    public void startup() {
+    public void startup() throws InterruptedException {
+        try {
+            secretManager.waitForInitialization();
+        } catch (SecretCryptoException e) {
+            serviceErrored(e);
+            return;
+        }
+
         // subscribe will invoke serviceChanged right away to sync from cloud
         // GG_NEEDS_REVIEW: TODO: Subscribe on thing key updates
         this.config.lookup(CONFIGURATION_CONFIG_KEY, SECRETS_TOPIC).subscribe(this::serviceChanged);
@@ -122,7 +162,7 @@ public class SecretManagerService extends PluginService {
         // secrets during download phase.
 
         // Since we have a valid directory, now try to load secrets if secrets file exists
-        // We dont want to load anything if there is no file, which could happen when
+        // We don't want to load anything if there is no file, which could happen when
         // we were not able to download any secrets due to network issues.
         try {
             secretManager.loadSecretsFromLocalStore();
@@ -130,8 +170,25 @@ public class SecretManagerService extends PluginService {
             // Ignore. This means we started with empty configuration
             logger.atDebug().setEventType("secret-manager-startup").log("No secrets configured");
         } catch (SecretManagerException e) {
-            serviceErrored(e);
-            return;
+            // No need to log anything here, it is already logged by loadSecretsFromLocalStore
+
+            // If there was a crypto issue then we probably need to re-encrypt the secrets, so we will wait for the sync
+            // future to complete without error since it would have started up already due to the subscribe() call
+            // above.
+            if (e.getCause() instanceof SecretCryptoException) {
+                Future<?> syncFut = syncFuture.get();
+                if (syncFut != null) {
+                    try {
+                        syncFut.get();
+                    } catch (ExecutionException ex) {
+                        serviceErrored(ex.getCause());
+                        return;
+                    }
+                }
+            } else {
+                serviceErrored(e);
+                return;
+            }
         }
         reportState(State.RUNNING);
     }

@@ -11,6 +11,7 @@ import com.aws.greengrass.authorization.exceptions.AuthorizationException;
 import com.aws.greengrass.dependency.State;
 import com.aws.greengrass.lifecyclemanager.GreengrassService;
 import com.aws.greengrass.lifecyclemanager.Kernel;
+import com.aws.greengrass.secretmanager.exception.SecretCryptoException;
 import com.aws.greengrass.secretmanager.exception.SecretManagerException;
 import com.aws.greengrass.secretmanager.exception.v1.GetSecretException;
 import com.aws.greengrass.testcommons.testutilities.GGExtension;
@@ -114,6 +115,16 @@ public class SecretManagerServiceTest {
 
         doThrow(SecretManagerException.class).when(mockSecretManager).loadSecretsFromLocalStore();
         startKernelWithConfig("config.yaml", State.ERRORED);
+    }
+
+    @Test
+    void GIVEN_secret_service_WHEN_load_secret_fails_with_crypto_error_THEN_service_reloads_secrets(ExtensionContext context) throws Exception {
+        ignoreExceptionOfType(context, SecretManagerException.class);
+
+        SecretManagerException ex = new SecretManagerException(new SecretCryptoException("Bad"));
+        doThrow(ex).when(mockSecretManager).loadSecretsFromLocalStore();
+        startKernelWithConfig("config.yaml", State.RUNNING);
+        verify(mockSecretManager).syncFromCloud(any());
     }
 
     @Test
