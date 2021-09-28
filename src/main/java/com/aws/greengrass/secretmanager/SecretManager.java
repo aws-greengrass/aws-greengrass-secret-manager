@@ -10,7 +10,6 @@ import com.aws.greengrass.logging.impl.LogManager;
 import com.aws.greengrass.secretmanager.crypto.Crypter;
 import com.aws.greengrass.secretmanager.crypto.KeyChain;
 import com.aws.greengrass.secretmanager.crypto.MasterKey;
-import com.aws.greengrass.secretmanager.crypto.PemFile;
 import com.aws.greengrass.secretmanager.crypto.RSAMasterKey;
 import com.aws.greengrass.secretmanager.exception.SecretCryptoException;
 import com.aws.greengrass.secretmanager.exception.SecretManagerException;
@@ -19,6 +18,7 @@ import com.aws.greengrass.secretmanager.kernel.KernelClient;
 import com.aws.greengrass.secretmanager.model.AWSSecretResponse;
 import com.aws.greengrass.secretmanager.model.SecretConfiguration;
 import com.aws.greengrass.secretmanager.model.SecretDocument;
+import com.aws.greengrass.util.EncryptionUtils;
 import com.aws.greengrass.util.Utils;
 import software.amazon.awssdk.aws.greengrass.model.SecretValue;
 import software.amazon.awssdk.core.SdkBytes;
@@ -29,8 +29,9 @@ import software.amazon.awssdk.services.secretsmanager.model.GetSecretValueRespon
 import java.io.IOException;
 import java.nio.ByteBuffer;
 import java.nio.charset.StandardCharsets;
-import java.security.PrivateKey;
-import java.security.PublicKey;
+import java.nio.file.Paths;
+import java.security.GeneralSecurityException;
+import java.security.KeyPair;
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.Base64;
@@ -56,8 +57,8 @@ public class SecretManager {
     private static final String secretNotFoundErr = "Secret not found ";
     private final Logger logger = LogManager.getLogger(SecretManager.class);
     // Cache which holds aws secrets result
-    private ConcurrentHashMap<String, GetSecretValueResponse> cache = new ConcurrentHashMap<>();
-    private ConcurrentHashMap<String, String> nametoArnMap = new ConcurrentHashMap<>();
+    private final ConcurrentHashMap<String, GetSecretValueResponse> cache = new ConcurrentHashMap<>();
+    private final ConcurrentHashMap<String, String> nameToArnMap = new ConcurrentHashMap<>();
 
     private final AWSSecretClient secretClient;
     private final SecretDao<SecretDocument, AWSSecretResponse> secretDao;
@@ -76,15 +77,17 @@ public class SecretManager {
         this.secretDao = dao;
         this.secretClient = secretClient;
         String keyPath = kernelClient.getPrivateKeyPath();
-        String certPath = kernelClient.getCertPath();
 
-        PublicKey publicKey = PemFile.generatePublicKeyFromCert(certPath);
-        PrivateKey privateKey = PemFile.generatePrivateKey(keyPath);
+        try {
+            KeyPair kp = EncryptionUtils.loadPrivateKeyPair(Paths.get(keyPath));
 
-        MasterKey masterKey = RSAMasterKey.createInstance(publicKey, privateKey);
-        KeyChain keyChain = new KeyChain();
-        keyChain.addMasterKey(masterKey);
-        this.crypter = new Crypter(keyChain);
+            MasterKey masterKey = RSAMasterKey.createInstance(kp.getPublic(), kp.getPrivate());
+            KeyChain keyChain = new KeyChain();
+            keyChain.addMasterKey(masterKey);
+            this.crypter = new Crypter(keyChain);
+        } catch (IOException | GeneralSecurityException e) {
+            throw new SecretCryptoException(e);
+        }
     }
 
     /**
@@ -186,11 +189,11 @@ public class SecretManager {
         logger.atDebug("load-secret-local-store").log();
         // read the db
         List<AWSSecretResponse> secrets = secretDao.getAll().getSecrets();
-        nametoArnMap.clear();
+        nameToArnMap.clear();
         cache.clear();
         if (!Utils.isEmpty(secrets)) {
             for (AWSSecretResponse secretResult : secrets) {
-                nametoArnMap.put(secretResult.getName(), secretResult.getArn());
+                nameToArnMap.put(secretResult.getName(), secretResult.getArn());
                 loadCache(secretResult);
             }
         }
@@ -328,10 +331,10 @@ public class SecretManager {
         }
         // normalize name to arn
         if (!Pattern.matches(VALID_SECRET_ARN_PATTERN, secretId)) {
-            if (!nametoArnMap.containsKey(secretId)) {
+            arn = nameToArnMap.get(secretId);
+            if (arn == null) {
                 throw new GetSecretException(404, secretNotFoundErr + secretId);
             }
-            arn = nametoArnMap.get(secretId);
         }
 
         // We cannot just return the value, as same arn can have multiple labels associated to it.

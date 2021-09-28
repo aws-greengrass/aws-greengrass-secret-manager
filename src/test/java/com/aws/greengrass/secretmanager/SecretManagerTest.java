@@ -10,7 +10,6 @@ import com.aws.greengrass.config.Topic;
 import com.aws.greengrass.secretmanager.crypto.Crypter;
 import com.aws.greengrass.secretmanager.crypto.KeyChain;
 import com.aws.greengrass.secretmanager.crypto.MasterKey;
-import com.aws.greengrass.secretmanager.crypto.PemFile;
 import com.aws.greengrass.secretmanager.crypto.RSAMasterKey;
 import com.aws.greengrass.secretmanager.exception.SecretCryptoException;
 import com.aws.greengrass.secretmanager.exception.SecretManagerException;
@@ -20,6 +19,7 @@ import com.aws.greengrass.secretmanager.model.AWSSecretResponse;
 import com.aws.greengrass.secretmanager.model.SecretConfiguration;
 import com.aws.greengrass.secretmanager.model.SecretDocument;
 import com.aws.greengrass.testcommons.testutilities.GGExtension;
+import com.aws.greengrass.util.EncryptionUtils;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -34,8 +34,8 @@ import software.amazon.awssdk.services.secretsmanager.model.GetSecretValueRespon
 import java.io.IOException;
 import java.nio.ByteBuffer;
 import java.nio.charset.StandardCharsets;
-import java.security.PrivateKey;
-import java.security.PublicKey;
+import java.nio.file.Paths;
+import java.security.KeyPair;
 import java.sql.Date;
 import java.time.Instant;
 import java.util.ArrayList;
@@ -113,9 +113,9 @@ class SecretManagerTest {
     private List<SecretConfiguration> getMockSecrets() {
         SecretConfiguration secret1 = SecretConfiguration.builder().arn(ARN_1).build();
         SecretConfiguration secret2 = SecretConfiguration.builder().arn(ARN_2)
-                .labels(Arrays.asList(new String[]{LATEST_LABEL, SECRET_LABEL_1})).build();
+                .labels(Arrays.asList(LATEST_LABEL, SECRET_LABEL_1)).build();
         SecretConfiguration secret3 = SecretConfiguration.builder().arn(ARN_3).build();
-        return new ArrayList() {{
+        return new ArrayList<SecretConfiguration>() {{
             add(secret1);
             add(secret2);
             add(secret3);
@@ -125,16 +125,16 @@ class SecretManagerTest {
     @BeforeEach
     void setup() throws Exception {
         lenient().when(mockKernelClient.getPrivateKeyPath())
-                .thenReturn(getClass().getResource("privateKey.pem").getPath());
-        lenient().when(mockKernelClient.getCertPath()).thenReturn(getClass().getResource("cert.pem").getPath());
+                .thenReturn(Paths.get(getClass().getResource("privateKey.pem").toURI()).toString());
+        lenient().when(mockKernelClient.getCertPath())
+                .thenReturn(Paths.get(getClass().getResource("cert.pem").toURI()).toString());
         Configuration mockConfiguration = mock(Configuration.class);
         lenient().when(mockKernelClient.getConfig()).thenReturn(mockConfiguration);
         Topic mockTopic = mock(Topic.class);
         lenient().when(mockConfiguration.lookup(anyString(), anyString(), anyString())).thenReturn(mockTopic);
-        PublicKey publicKey = PemFile.generatePublicKeyFromCert(getClass().getResource("cert.pem").getPath());
-        PrivateKey privateKey = PemFile.generatePrivateKey(getClass().getResource("privateKey.pem").getPath());
+        KeyPair kp = EncryptionUtils.loadPrivateKeyPair(Paths.get(getClass().getResource("privateKey.pem").toURI()));
 
-        MasterKey masterKey = RSAMasterKey.createInstance(publicKey, privateKey);
+        MasterKey masterKey = RSAMasterKey.createInstance(kp.getPublic(), kp.getPrivate());
         KeyChain keyChain = new KeyChain();
         keyChain.addMasterKey(masterKey);
         this.crypter = new Crypter(keyChain);
@@ -651,7 +651,6 @@ class SecretManagerTest {
     void GIVEN_secret_manager_WHEN_invalid_key_THEN_secret_manager_not_instantiated() {
         reset(mockKernelClient);
         when(mockKernelClient.getPrivateKeyPath()).thenReturn("/tmp");
-        when(mockKernelClient.getCertPath()).thenReturn("/tmp");
         assertThrows(SecretCryptoException.class,
                 () -> new SecretManager(mockAWSSecretClient, mockKernelClient, mockDao));
     }

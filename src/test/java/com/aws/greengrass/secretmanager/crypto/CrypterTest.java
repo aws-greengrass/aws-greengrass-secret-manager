@@ -52,7 +52,7 @@ public class CrypterTest {
 
     @Test
     void GIVEN_secret_key_WHEN_crypter_encrypts_THEN_decrypt_works()
-            throws SecretCryptoException, NoSuchAlgorithmException {
+            throws SecretCryptoException {
         byte[] plainText = DUMMY_STRING.getBytes(StandardCharsets.UTF_8);
         Crypter crypter = new Crypter(keyChain);
         byte[] cipherText = crypter.encrypt(plainText, CONTEXT_STRING);
