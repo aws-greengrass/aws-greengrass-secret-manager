@@ -20,7 +20,7 @@ public class RSAMasterKey implements MasterKey {
     private static final String KEY_PROVIDER = "gg:secrets";
     private static final String WRAPPING_ALGO = "RSA/ECB/OAEPWithSHA-256AndMGF1Padding";
 
-    private JceMasterKey masterKey;
+    private final JceMasterKey masterKey;
 
     private RSAMasterKey(final PublicKey publicKey,
                          final PrivateKey privateKey) throws SecretCryptoException {
