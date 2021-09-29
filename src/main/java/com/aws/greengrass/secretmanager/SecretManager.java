@@ -166,11 +166,15 @@ public class SecretManager {
                         } catch (SecretCryptoException ex) {
                             e.addSuppressed(ex);
                             throw new SecretManagerException(
-                                    String.format("Failed to sync secret %s, label %s", secretArn, label), e);
+                                    String.format("Could not download secret %s with label %s from cloud, you can "
+                                            + "attempt a re-fetch by redeploying secret manager", secretArn, label),
+                                    e);
                         }
                     } else {
                         throw new SecretManagerException(
-                                String.format("Failed to sync secret %s, label %s", secretArn, label), e);
+                                String.format("Could not download secret %s with label %s from cloud, you can "
+                                        + "attempt a re-fetch by redeploying secret manager", secretArn, label),
+                                e);
                     }
                 } catch (Exception e) {
                     throw new SecretManagerException(e);
