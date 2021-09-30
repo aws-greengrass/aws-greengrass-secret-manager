@@ -18,14 +18,14 @@ public class RSAMasterKey implements MasterKey {
     // Metadata used by JCEMasterKey, so that another instance of JCEMasterKey cannot be used
     // to encrypt/decrypt payload even if it uses the same key.
     private static final String KEY_PROVIDER = "gg:secrets";
-    private static final String WRAPPING_ALGO = "RSA/ECB/OAEPWithSHA-256AndMGF1Padding";
+    private static final String WRAPPING_ALGO = "RSA/ECB/PKCS1Padding";
 
     private final JceMasterKey masterKey;
 
     private RSAMasterKey(final PublicKey publicKey,
                          final PrivateKey privateKey) throws SecretCryptoException {
         String keyId = publicKeySHA(publicKey);
-        this.masterKey = JceMasterKey.getInstance(publicKey, privateKey, KEY_PROVIDER, keyId, WRAPPING_ALGO);
+        masterKey = JceMasterKey.getInstance(publicKey, privateKey, KEY_PROVIDER, keyId, WRAPPING_ALGO);
     }
 
     public static MasterKey createInstance(final PublicKey publicKey,

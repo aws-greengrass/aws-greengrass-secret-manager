@@ -18,7 +18,7 @@ import java.util.List;
 public class KeyChain {
 
     @Getter
-    private List<JceMasterKey> keyProviders = new ArrayList<>();
+    private final List<JceMasterKey> keyProviders = new ArrayList<>();
 
     /**
      * Add a master key to this key chain.

@@ -14,11 +14,12 @@ import com.aws.greengrass.secretmanager.crypto.RSAMasterKey;
 import com.aws.greengrass.secretmanager.exception.SecretCryptoException;
 import com.aws.greengrass.secretmanager.exception.SecretManagerException;
 import com.aws.greengrass.secretmanager.exception.v1.GetSecretException;
-import com.aws.greengrass.secretmanager.kernel.KernelClient;
 import com.aws.greengrass.secretmanager.model.AWSSecretResponse;
 import com.aws.greengrass.secretmanager.model.SecretConfiguration;
 import com.aws.greengrass.secretmanager.model.SecretDocument;
-import com.aws.greengrass.util.EncryptionUtils;
+import com.aws.greengrass.security.SecurityService;
+import com.aws.greengrass.security.exceptions.ServiceUnavailableException;
+import com.aws.greengrass.util.RetryUtils;
 import com.aws.greengrass.util.Utils;
 import software.amazon.awssdk.aws.greengrass.model.SecretValue;
 import software.amazon.awssdk.core.SdkBytes;
@@ -29,18 +30,19 @@ import software.amazon.awssdk.services.secretsmanager.model.GetSecretValueRespon
 import java.io.IOException;
 import java.nio.ByteBuffer;
 import java.nio.charset.StandardCharsets;
-import java.nio.file.Paths;
-import java.security.GeneralSecurityException;
 import java.security.KeyPair;
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.Base64;
+import java.util.Collections;
 import java.util.Date;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.ExecutorService;
 import java.util.regex.Pattern;
+import javax.annotation.Nullable;
 import javax.inject.Inject;
 
 /**
@@ -62,31 +64,42 @@ public class SecretManager {
 
     private final AWSSecretClient secretClient;
     private final SecretDao<SecretDocument, AWSSecretResponse> secretDao;
-    private final Crypter crypter;
+    @Nullable
+    private Crypter crypter;
+    private final Result<SecretCryptoException> initialized = new Result<>();
 
     /**
      * Constructor.
      * @param secretClient client for aws secrets.
-     * @param kernelClient client for kernel
+     * @param securityService security service.
      * @param dao          dao for persistent store.
-     * @throws SecretCryptoException when unable to initialize.
      */
     @Inject
-    SecretManager(AWSSecretClient secretClient, KernelClient kernelClient, FileSecretDao dao)
-            throws SecretCryptoException {
+    SecretManager(AWSSecretClient secretClient, SecurityService securityService, FileSecretDao dao,
+                  ExecutorService executor) {
         this.secretDao = dao;
         this.secretClient = secretClient;
-        String keyPath = kernelClient.getPrivateKeyPath();
 
+        executor.execute(() -> loadCrypter(securityService));
+    }
+
+    private void loadCrypter(SecurityService securityService) {
         try {
-            KeyPair kp = EncryptionUtils.loadPrivateKeyPair(Paths.get(keyPath));
-
+            KeyPair kp = RetryUtils.runWithRetry(RetryUtils.RetryConfig.builder().maxAttempt(Integer.MAX_VALUE)
+                            .retryableExceptions(Collections.singletonList(ServiceUnavailableException.class)).build(),
+                    () -> securityService.getKeyPair(securityService.getDeviceIdentityPrivateKeyURI()), "get-keypair",
+                    logger);
             MasterKey masterKey = RSAMasterKey.createInstance(kp.getPublic(), kp.getPrivate());
             KeyChain keyChain = new KeyChain();
             keyChain.addMasterKey(masterKey);
             this.crypter = new Crypter(keyChain);
-        } catch (IOException | GeneralSecurityException e) {
-            throw new SecretCryptoException(e);
+            this.initialized.set(null);
+        } catch (SecretCryptoException e) {
+            this.initialized.set(e);
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+        } catch (Exception e) {
+            this.initialized.set(new SecretCryptoException(e));
         }
     }
 
@@ -100,6 +113,7 @@ public class SecretManager {
         this.secretDao = dao;
         this.secretClient = secretClient;
         this.crypter = crypter;
+        this.initialized.set(null);
     }
 
     /**
@@ -107,9 +121,16 @@ public class SecretManager {
      * This is used when configuration changes and secrets have to be re downloaded.
      * @param configuredSecrets List of secrets that are to be downloaded
      * @throws SecretManagerException when there are issues reading/writing to disk
+     * @throws InterruptedException if thread is interrupted while running
      */
-    public void syncFromCloud(List<SecretConfiguration> configuredSecrets) throws SecretManagerException {
+    public void syncFromCloud(List<SecretConfiguration> configuredSecrets)
+            throws SecretManagerException, InterruptedException {
         logger.atDebug("sync-secret-from-cloud").log();
+        try {
+            waitForInitialization();
+        } catch (SecretCryptoException e) {
+            throw new SecretManagerException(e);
+        }
         List<AWSSecretResponse> downloadedSecrets = new ArrayList<>();
         for (SecretConfiguration secretConfig : configuredSecrets) {
             String secretArn = secretConfig.getArn();
@@ -132,14 +153,28 @@ public class SecretManager {
                 } catch (IOException | SdkClientException e) {
                     AWSSecretResponse secretFromDao = secretDao.get(secretArn, label);
                     if (secretFromDao != null) {
-                        downloadedSecrets.add(secretFromDao);
-                        logger.atDebug().kv("secret", secretArn).kv("label", label)
-                                .log("Secret configuration is not changed. Loaded from local store");
                         logger.atWarn().kv("secret", secretArn).kv("label", label)
-                                .log(String.format("Could not sync secret %s, label %s", secretArn, label));
+                                .log("Could not sync secret from cloud, but we have a local version which may work");
+                        // We couldn't sync it from the cloud, try loading it from local copy
+                        try {
+                            // Ensure that we're able to decrypt it. If we are unable to decrypt it
+                            // then we have no more fallbacks and the customer needs to fix the issue.
+                            decrypt(secretFromDao);
+                            downloadedSecrets.add(secretFromDao);
+                            logger.atDebug().kv("secret", secretArn).kv("label", label)
+                                    .log("Secret configuration is not changed. Loaded from local store");
+                        } catch (SecretCryptoException ex) {
+                            e.addSuppressed(ex);
+                            throw new SecretManagerException(
+                                    String.format("Could not download secret %s with label %s from cloud, you can "
+                                            + "attempt a re-fetch by redeploying secret manager", secretArn, label),
+                                    e);
+                        }
                     } else {
                         throw new SecretManagerException(
-                                String.format("Failed to sync secret %s, label %s", secretArn, label), e);
+                                String.format("Could not download secret %s with label %s from cloud, you can "
+                                        + "attempt a re-fetch by redeploying secret manager", secretArn, label),
+                                e);
                     }
                 } catch (Exception e) {
                     throw new SecretManagerException(e);
@@ -182,6 +217,25 @@ public class SecretManager {
     }
 
     /**
+     * Wait until interrupted for the crypter to be initialized.
+     *
+     * @throws SecretCryptoException if initialization failed
+     * @throws InterruptedException  if the thread is interrupted while waiting
+     */
+    void waitForInitialization() throws SecretCryptoException, InterruptedException {
+        synchronized (initialized) {
+            while (!initialized.isSet()) {
+                initialized.wait();
+            }
+        }
+        if (initialized.isSet()) {
+            if (initialized.getValue() != null) {
+                throw initialized.getValue();
+            }
+        }
+    }
+
+    /**
      * load the secrets from a local store. This is used across restarts to load secrets from store.
      * @throws SecretManagerException when there are issues reading from disk
      */
@@ -199,6 +253,34 @@ public class SecretManager {
         }
     }
 
+    private GetSecretValueResponse decrypt(AWSSecretResponse awsSecretResponse) throws SecretCryptoException {
+        String decryptedSecretString = null;
+        if (awsSecretResponse.getEncryptedSecretString() != null) {
+            byte[] decryptedSecret = crypter.decrypt(
+                    Base64.getDecoder().decode(awsSecretResponse.getEncryptedSecretString()),
+                    awsSecretResponse.getArn());
+            decryptedSecretString = new String(decryptedSecret, StandardCharsets.UTF_8);
+        }
+
+        SdkBytes decryptedSecretBinary = null;
+        if (awsSecretResponse.getEncryptedSecretBinary() != null) {
+            byte[] decryptedSecret = crypter.decrypt(
+                    Base64.getDecoder().decode(awsSecretResponse.getEncryptedSecretBinary()),
+                    awsSecretResponse.getArn());
+            decryptedSecretBinary = SdkBytes.fromByteArray(decryptedSecret);
+        }
+
+        return GetSecretValueResponse.builder()
+                .secretString(decryptedSecretString)
+                .secretBinary(decryptedSecretBinary)
+                .name(awsSecretResponse.getName())
+                .arn(awsSecretResponse.getArn())
+                .createdDate(Instant.ofEpochMilli(awsSecretResponse.getCreatedDate()))
+                .versionId(awsSecretResponse.getVersionId())
+                .versionStages(awsSecretResponse.getVersionStages())
+                .build();
+    }
+
     /*
     * Cache holds multiple references of the secret with different keys for fast lookup
     * Secret with arn1, version V1, labels as L1 and L2 is loaded as 4 entries
@@ -207,39 +289,16 @@ public class SecretManager {
     * arn1:l1 -> secret3
     * arn1:l2 -> secret4
     */
-    private void loadCache(AWSSecretResponse awsSecretResponse) throws SecretManagerException {
+    private void loadCache(AWSSecretResponse awsSecretResponse)
+            throws SecretManagerException {
         GetSecretValueResponse decryptedResponse = null;
         try {
-            String decryptedSecretString = null;
-            if (awsSecretResponse.getEncryptedSecretString() != null) {
-                byte[] decryptedSecret = crypter.decrypt(
-                        Base64.getDecoder().decode(awsSecretResponse.getEncryptedSecretString()),
-                        awsSecretResponse.getArn());
-                decryptedSecretString = new String(decryptedSecret, StandardCharsets.UTF_8);
-            }
-
-            SdkBytes decryptedSecretBinary = null;
-            if (awsSecretResponse.getEncryptedSecretBinary() != null) {
-                byte[] decryptedSecret = crypter.decrypt(
-                        Base64.getDecoder().decode(awsSecretResponse.getEncryptedSecretBinary()),
-                        awsSecretResponse.getArn());
-                decryptedSecretBinary = SdkBytes.fromByteArray(decryptedSecret);
-            }
-
-            decryptedResponse = GetSecretValueResponse.builder()
-                    .secretString(decryptedSecretString)
-                    .secretBinary(decryptedSecretBinary)
-                    .name(awsSecretResponse.getName())
-                    .arn(awsSecretResponse.getArn())
-                    .createdDate(Instant.ofEpochMilli(awsSecretResponse.getCreatedDate()))
-                    .versionId(awsSecretResponse.getVersionId())
-                    .versionStages(awsSecretResponse.getVersionStages())
-                    .build();
+            decryptedResponse = decrypt(awsSecretResponse);
         } catch (SecretCryptoException e) {
             // This should never happen ideally
             logger.atError().kv("secret",
                     awsSecretResponse.getArn()).cause(e).log("Unable to decrypt secret, skip loading in cache");
-            throw new SecretManagerException("Cannot load secret from disk");
+            throw new SecretManagerException("Cannot load secret from disk", e);
         }
         String secretArn = decryptedResponse.arn();
         cache.put(secretArn, decryptedResponse);
