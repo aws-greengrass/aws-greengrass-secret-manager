@@ -28,6 +28,7 @@ import software.amazon.awssdk.services.secretsmanager.model.GetSecretValueReques
 import software.amazon.awssdk.services.secretsmanager.model.GetSecretValueResponse;
 
 import java.io.IOException;
+import java.net.URI;
 import java.nio.ByteBuffer;
 import java.nio.charset.StandardCharsets;
 import java.security.KeyPair;
@@ -85,9 +86,11 @@ public class SecretManager {
 
     private void loadCrypter(SecurityService securityService) {
         try {
+            URI privateKeyUri = securityService.getDeviceIdentityPrivateKeyURI();
+            URI certUri = securityService.getDeviceIdentityCertificateURI();
             KeyPair kp = RetryUtils.runWithRetry(RetryUtils.RetryConfig.builder().maxAttempt(Integer.MAX_VALUE)
                             .retryableExceptions(Collections.singletonList(ServiceUnavailableException.class)).build(),
-                    () -> securityService.getKeyPair(securityService.getDeviceIdentityPrivateKeyURI()), "get-keypair",
+                    () -> securityService.getKeyPair(privateKeyUri, certUri), "get-keypair",
                     logger);
             MasterKey masterKey = RSAMasterKey.createInstance(kp.getPublic(), kp.getPrivate());
             KeyChain keyChain = new KeyChain();
