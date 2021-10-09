@@ -76,7 +76,6 @@ public class CrypterTest {
                 EncryptionUtilsTest.generateCertificateFile(2048, true, resourcePath.resolve("certificate.pem"), false);
         List<X509Certificate> certificateChain = EncryptionUtils.loadX509Certificates(cert.getLeft());
         hsm.importPrivateKey(cert.getRight().getPrivate(), certificateChain.toArray(new Certificate[0]), "iotkey", token);
-
         startService();
     }
 
