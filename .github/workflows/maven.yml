@@ -26,10 +26,15 @@ jobs:
       - run: rm -rf /tmp/*
         if: matrix.os == 'ubuntu-latest'
         continue-on-error: true
+      - name: Install softhsm2
+        run: sudo apt-get install -y softhsm2
+        if: matrix.os == 'ubuntu-latest'
       - name: Build with Maven (not Windows)
         env:
           AWS_REGION: us-west-2
-        run: mvn -ntp -U clean verify
+        run: |
+          sudo -E mvn -ntp -U clean verify
+          sudo chown -R runner target
         if: matrix.os != 'windows-latest'
       - name: Build with Maven (Windows)
         env:
