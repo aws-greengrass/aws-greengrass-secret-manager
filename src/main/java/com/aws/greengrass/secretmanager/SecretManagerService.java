@@ -157,6 +157,16 @@ public class SecretManagerService extends PluginService {
         // subscribe will invoke serviceChanged right away to sync from cloud
         // GG_NEEDS_REVIEW: TODO: Subscribe on thing key updates
         this.config.lookup(CONFIGURATION_CONFIG_KEY, SECRETS_TOPIC).subscribe(this::serviceChanged);
+        // Wait for the initial sync to complete before marking ourselves as running
+        Future<?> syncFut = syncFuture.get();
+        if (syncFut != null) {
+            try {
+                syncFut.get();
+            } catch (ExecutionException ex) {
+                serviceErrored(ex.getCause());
+                return;
+            }
+        }
 
         // GG_NEEDS_REVIEW: TODO: Modify secret service to only provide interface to deal with downloaded
         // secrets during download phase.
@@ -176,7 +186,7 @@ public class SecretManagerService extends PluginService {
             // future to complete without error since it would have started up already due to the subscribe() call
             // above.
             if (e.getCause() instanceof SecretCryptoException) {
-                Future<?> syncFut = syncFuture.get();
+                syncFut = syncFuture.get();
                 if (syncFut != null) {
                     try {
                         syncFut.get();
