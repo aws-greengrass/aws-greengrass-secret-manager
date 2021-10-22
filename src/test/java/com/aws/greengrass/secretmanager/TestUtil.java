@@ -10,6 +10,6 @@ import org.junit.jupiter.api.extension.ExtensionContext;
 
 public class TestUtil {
     public static void ignoreErrors(ExtensionContext context) {
-        ExceptionLogProtector.ignoreExceptionWithStackTraceContaining(context, IllegalArgumentException.class, "initializePkcs11Provider");
+        ExceptionLogProtector.ignoreExceptionWithStackTraceContaining(context, IllegalArgumentException.class, "initializePkcs11Lib");
     }
 }
