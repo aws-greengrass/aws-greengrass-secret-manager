@@ -8,6 +8,7 @@ package com.aws.greengrass.secretmanager;
 import com.aws.greengrass.authorization.AuthorizationHandler;
 import com.aws.greengrass.authorization.Permission;
 import com.aws.greengrass.authorization.exceptions.AuthorizationException;
+import com.aws.greengrass.config.ChildChanged;
 import com.aws.greengrass.config.Topic;
 import com.aws.greengrass.config.Topics;
 import com.aws.greengrass.config.WhatHappened;
@@ -21,6 +22,7 @@ import com.aws.greengrass.secretmanager.exception.v1.GetSecretException;
 import com.aws.greengrass.secretmanager.model.SecretConfiguration;
 import com.aws.greengrass.secretmanager.model.v1.GetSecretValueError;
 import com.aws.greengrass.secretmanager.model.v1.GetSecretValueResult;
+import com.aws.greengrass.util.Coerce;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.MapperFeature;
@@ -56,6 +58,14 @@ public class SecretManagerService extends PluginService {
     private final AuthorizationHandler authorizationHandler;
     private final ExecutorService executor;
     private final AtomicReference<Future<?>> syncFuture = new AtomicReference<Future<?>>(null);
+    private final ChildChanged handleConfigurationChangeLambda = (whatHappened, node) -> {
+        if (whatHappened == WhatHappened.timestampUpdated || whatHappened == WhatHappened.interiorAdded) {
+            return;
+        }
+        if (whatHappened == WhatHappened.initialized || SECRETS_TOPIC.equals(node.getName())) {
+            serviceChanged();
+        }
+    };
 
     @Inject
     SecretManagerIPCAgent secretManagerIPCAgent;
@@ -81,6 +91,14 @@ public class SecretManagerService extends PluginService {
         this.executor = executorService;
     }
 
+    @Override
+    protected void install() throws InterruptedException {
+        super.install();
+        // subscribe will invoke serviceChanged right away to sync from cloud
+        // GG_NEEDS_REVIEW: TODO: Subscribe on thing key updates
+        this.config.lookupTopics(CONFIGURATION_CONFIG_KEY).subscribe(this.handleConfigurationChangeLambda);
+    }
+
     private void syncFromCloud() throws SecretManagerException, InterruptedException {
         Topic secretParam = this.config.lookup(CONFIGURATION_CONFIG_KEY, SECRETS_TOPIC);
         try {
@@ -103,10 +121,7 @@ public class SecretManagerService extends PluginService {
         }
     }
 
-    private void serviceChanged(WhatHappened w, Topic t) {
-        if (WhatHappened.timestampUpdated.equals(w)) {
-            return;
-        }
+    private void serviceChanged() {
         replaceSyncFuture(() -> {
             try {
                 this.syncFromCloud();
@@ -153,10 +168,6 @@ public class SecretManagerService extends PluginService {
             serviceErrored(e);
             return;
         }
-
-        // subscribe will invoke serviceChanged right away to sync from cloud
-        // GG_NEEDS_REVIEW: TODO: Subscribe on thing key updates
-        this.config.lookup(CONFIGURATION_CONFIG_KEY, SECRETS_TOPIC).subscribe(this::serviceChanged);
         // Wait for the initial sync to complete before marking ourselves as running
         Future<?> syncFut = syncFuture.get();
         if (syncFut != null) {
