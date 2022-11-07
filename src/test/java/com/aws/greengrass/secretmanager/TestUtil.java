@@ -10,6 +10,6 @@ import org.junit.jupiter.api.extension.ExtensionContext;
 
 public class TestUtil {
     public static void ignoreErrors(ExtensionContext context) {
-        ExceptionLogProtector.ignoreExceptionWithStackTraceContaining(context, IllegalArgumentException.class, "initializePkcs11Lib");
+        ExceptionLogProtector.ignoreExceptionWithMessage(context, "PKCS11 missing required configuration value for library");
     }
 }

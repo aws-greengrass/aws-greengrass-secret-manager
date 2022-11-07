@@ -141,6 +141,8 @@ public class CrypterTest {
         masterKey = RSAMasterKey.createInstance(kp.getPublic(), kp.getPrivate());
         keyChain = new KeyChain();
         keyChain.addMasterKey(masterKey);
+        // Set this property for kernel to scan its own classpath to find plugins
+        System.setProperty("aws.greengrass.scanSelfClasspath", "true");
     }
 
     @Test
