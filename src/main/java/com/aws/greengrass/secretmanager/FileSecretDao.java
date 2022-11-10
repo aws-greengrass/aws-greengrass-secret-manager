@@ -19,6 +19,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import java.io.IOException;
 import javax.inject.Inject;
 
+import static com.aws.greengrass.lifecyclemanager.GreengrassService.RUNTIME_STORE_NAMESPACE_TOPIC;
 import static com.aws.greengrass.lifecyclemanager.GreengrassService.SERVICES_NAMESPACE_TOPIC;
 
 /**
@@ -50,7 +51,8 @@ public class FileSecretDao implements SecretDao<SecretDocument, AWSSecretRespons
      */
     public synchronized SecretDocument getAll() throws SecretManagerException {
         Topic secretResponseTopic = kernelClient.getConfig().lookup(SERVICES_NAMESPACE_TOPIC,
-                    SecretManagerService.SECRET_MANAGER_SERVICE_NAME, SECRET_RESPONSE_TOPIC);
+                    SecretManagerService.SECRET_MANAGER_SERVICE_NAME, RUNTIME_STORE_NAMESPACE_TOPIC,
+                SECRET_RESPONSE_TOPIC);
         if (secretResponseTopic.getOnce() == null) {
             throw new NoSecretFoundException("No secrets found in file");
         }
@@ -92,7 +94,8 @@ public class FileSecretDao implements SecretDao<SecretDocument, AWSSecretRespons
      */
     public synchronized void saveAll(SecretDocument doc) throws SecretManagerException {
         Topic secretTopic = kernelClient.getConfig().lookup(SERVICES_NAMESPACE_TOPIC,
-                SecretManagerService.SECRET_MANAGER_SERVICE_NAME, SECRET_RESPONSE_TOPIC);
+                SecretManagerService.SECRET_MANAGER_SERVICE_NAME, RUNTIME_STORE_NAMESPACE_TOPIC,
+                SECRET_RESPONSE_TOPIC);
         try {
             secretTopic.withValue(OBJECT_MAPPER.writeValueAsString(doc));
         } catch (IOException e) {
