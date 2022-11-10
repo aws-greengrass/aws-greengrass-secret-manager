@@ -31,6 +31,7 @@ import java.util.Arrays;
 import java.util.List;
 import java.util.UUID;
 
+import static com.aws.greengrass.lifecyclemanager.GreengrassService.RUNTIME_STORE_NAMESPACE_TOPIC;
 import static com.aws.greengrass.lifecyclemanager.GreengrassService.SERVICES_NAMESPACE_TOPIC;
 import static com.aws.greengrass.secretmanager.FileSecretDao.SECRET_RESPONSE_TOPIC;
 import static org.hamcrest.MatcherAssert.assertThat;
@@ -105,7 +106,8 @@ class FileSecretDaoTest {
         FileSecretDao dao = new FileSecretDao(mockKernelClient);
         Topic mockTopic = mock(Topic.class);
         when(mockConfiguration.lookup(SERVICES_NAMESPACE_TOPIC,
-                SecretManagerService.SECRET_MANAGER_SERVICE_NAME, SECRET_RESPONSE_TOPIC)).thenReturn(mockTopic);
+                SecretManagerService.SECRET_MANAGER_SERVICE_NAME, RUNTIME_STORE_NAMESPACE_TOPIC,
+                SECRET_RESPONSE_TOPIC)).thenReturn(mockTopic);
 
 
         List<AWSSecretResponse> response = getSecrets();
@@ -196,7 +198,8 @@ class FileSecretDaoTest {
         FileSecretDao dao = new FileSecretDao(mockKernelClient);
         Topic mockTopic = mock(Topic.class);
         when(mockConfiguration.lookup(SERVICES_NAMESPACE_TOPIC,
-                SecretManagerService.SECRET_MANAGER_SERVICE_NAME, SECRET_RESPONSE_TOPIC)).thenReturn(mockTopic);
+                SecretManagerService.SECRET_MANAGER_SERVICE_NAME, RUNTIME_STORE_NAMESPACE_TOPIC,
+                SECRET_RESPONSE_TOPIC)).thenReturn(mockTopic);
         when(mockTopic.getOnce()).thenReturn(null);
 
         assertThrows(NoSecretFoundException.class, () -> dao.getAll());
@@ -208,7 +211,7 @@ class FileSecretDaoTest {
         FileSecretDao dao = new FileSecretDao(mockKernelClient);
         Topic mockTopic = mock(Topic.class);
         when(mockConfiguration.lookup(SERVICES_NAMESPACE_TOPIC, SecretManagerService.SECRET_MANAGER_SERVICE_NAME,
-                SECRET_RESPONSE_TOPIC)).thenReturn(mockTopic);
+                RUNTIME_STORE_NAMESPACE_TOPIC, SECRET_RESPONSE_TOPIC)).thenReturn(mockTopic);
         // Make readValue() throw JsonProcessingException
         when(Coerce.toString(mockTopic)).thenReturn(mockTopic.getClass().getName());
         assertThrows(SecretManagerException.class, () -> dao.getAll());
