@@ -6,33 +6,27 @@
 package com.aws.greengrass.secretmanager;
 
 import com.aws.greengrass.deployment.DeviceConfiguration;
+import com.aws.greengrass.logging.impl.LogManager;
 import com.aws.greengrass.secretmanager.exception.SecretManagerException;
 import com.aws.greengrass.tes.LazyCredentialProvider;
-import com.aws.greengrass.util.BaseRetryableAccessor;
 import com.aws.greengrass.util.Coerce;
 import com.aws.greengrass.util.CrashableSupplier;
 import com.aws.greengrass.util.ProxyUtils;
+import com.aws.greengrass.util.RetryUtils;
 import com.aws.greengrass.util.Utils;
 import software.amazon.awssdk.regions.Region;
 import software.amazon.awssdk.services.secretsmanager.SecretsManagerClient;
-import software.amazon.awssdk.services.secretsmanager.model.DecryptionFailureException;
 import software.amazon.awssdk.services.secretsmanager.model.GetSecretValueRequest;
 import software.amazon.awssdk.services.secretsmanager.model.GetSecretValueResponse;
-import software.amazon.awssdk.services.secretsmanager.model.InternalServiceErrorException;
-import software.amazon.awssdk.services.secretsmanager.model.InvalidParameterException;
-import software.amazon.awssdk.services.secretsmanager.model.InvalidRequestException;
-import software.amazon.awssdk.services.secretsmanager.model.ResourceNotFoundException;
 
 import java.io.IOException;
 import java.util.Collections;
-import java.util.HashSet;
 import javax.inject.Inject;
 
 public class AWSSecretClient {
 
     private final SecretsManagerClient secretsManagerClient;
-    private static final int RETRY_COUNT = 3;
-    private static final int BACKOFF_MILLIS = 200;
+    private static final int RETRY_COUNT = Integer.MAX_VALUE - 1;
 
     /**
      * Constructor which utilizes  TES for initializing AWS client.
@@ -57,26 +51,26 @@ public class AWSSecretClient {
      * @return AWS secret response
      * @throws SecretManagerException If there is a problem fetching secret
      * @throws IOException If there is a network error
+     * @throws InterruptedException If the thread is interrupted
      */
-    public GetSecretValueResponse getSecret(GetSecretValueRequest request) throws SecretManagerException, IOException {
-        String errorMsg = String.format("Exception occurred while fetching secrets "
-                        + "from AWSSecretsManager for secret: %s, version: %s, label: %s",
-                request.secretId(), request.versionId(), request.versionStage());
+    public GetSecretValueResponse getSecret(GetSecretValueRequest request)
+            throws SecretManagerException, IOException, InterruptedException {
         try {
             validateInput(request);
-            BaseRetryableAccessor accessor = new BaseRetryableAccessor();
-            CrashableSupplier<GetSecretValueResponse, IOException> getSecretValueResponse =
+            CrashableSupplier<GetSecretValueResponse, Exception> getSecretValue =
                     () -> secretsManagerClient.getSecretValue(request);
-            GetSecretValueResponse response = accessor.retry(RETRY_COUNT, BACKOFF_MILLIS, getSecretValueResponse,
-                    new HashSet<>(Collections.singletonList(IOException.class)));
+            GetSecretValueResponse response = RetryUtils.runWithRetry(
+                    RetryUtils.RetryConfig.builder().maxAttempt(RETRY_COUNT)
+                            .retryableExceptions(Collections.singletonList(IOException.class)).build(),
+                    getSecretValue, "fetch-secret", LogManager.getLogger(AWSSecretClient.class));
             validateResponse(response);
             return response;
-        } catch (InternalServiceErrorException
-                | DecryptionFailureException
-                | ResourceNotFoundException
-                | InvalidParameterException
-                | InvalidRequestException
-                | IllegalArgumentException e) {
+        } catch (InterruptedException | IOException e) {
+            throw e;
+        } catch (Exception e) {
+            String errorMsg = String.format("Exception occurred while fetching secrets "
+                            + "from AWSSecretsManager for secret: %s, version: %s, label: %s",
+                    request.secretId(), request.versionId(), request.versionStage());
             throw new SecretManagerException(errorMsg, e);
         }
     }

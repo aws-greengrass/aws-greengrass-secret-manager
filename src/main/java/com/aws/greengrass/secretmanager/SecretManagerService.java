@@ -22,7 +22,6 @@ import com.aws.greengrass.secretmanager.exception.v1.GetSecretException;
 import com.aws.greengrass.secretmanager.model.SecretConfiguration;
 import com.aws.greengrass.secretmanager.model.v1.GetSecretValueError;
 import com.aws.greengrass.secretmanager.model.v1.GetSecretValueResult;
-import com.aws.greengrass.util.Coerce;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.MapperFeature;
@@ -42,6 +41,7 @@ import java.util.concurrent.ExecutionException;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Future;
 import java.util.concurrent.atomic.AtomicReference;
+import javax.annotation.Nullable;
 import javax.inject.Inject;
 
 import static com.aws.greengrass.componentmanager.KernelConfigResolver.CONFIGURATION_CONFIG_KEY;
@@ -95,7 +95,6 @@ public class SecretManagerService extends PluginService {
     protected void install() throws InterruptedException {
         super.install();
         // subscribe will invoke serviceChanged right away to sync from cloud
-        // GG_NEEDS_REVIEW: TODO: Subscribe on thing key updates
         this.config.lookupTopics(CONFIGURATION_CONFIG_KEY).subscribe(this.handleConfigurationChangeLambda);
     }
 
@@ -135,7 +134,7 @@ public class SecretManagerService extends PluginService {
         });
     }
 
-    private synchronized Future<?> replaceSyncFuture(Runnable r) {
+    private synchronized Future<?> replaceSyncFuture(@Nullable Runnable r) {
         Future<?> newFut = r == null ? null : executor.submit(r);
         Future<?> oldFut = syncFuture.getAndSet(newFut);
         if (oldFut != null) {
@@ -158,6 +157,12 @@ public class SecretManagerService extends PluginService {
         greengrassCoreIPCService.setGetSecretValueHandler(
                 context -> secretManagerIPCAgent.getSecretValueOperationHandler(context));
         logger.atInfo("ipc-register-request-handler").log();
+    }
+
+    @Override
+    protected void shutdown() throws InterruptedException {
+        replaceSyncFuture(null);
+        super.shutdown();
     }
 
     @Override

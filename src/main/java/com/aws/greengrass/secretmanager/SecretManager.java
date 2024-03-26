@@ -168,17 +168,17 @@ public class SecretManager {
                                     .log("Secret configuration is not changed. Loaded from local store");
                         } catch (SecretCryptoException ex) {
                             e.addSuppressed(ex);
-                            throw new SecretManagerException(
-                                    String.format("Could not download secret %s with label %s from cloud, you can "
-                                            + "attempt a re-fetch by redeploying secret manager", secretArn, label),
-                                    e);
+                            throw new SecretManagerException(String.format(
+                                    "Could not download secret %s with label %s from cloud, you can "
+                                            + "attempt a re-fetch by redeploying secret manager", secretArn, label), e);
                         }
                     } else {
-                        throw new SecretManagerException(
-                                String.format("Could not download secret %s with label %s from cloud, you can "
-                                        + "attempt a re-fetch by redeploying secret manager", secretArn, label),
-                                e);
+                        throw new SecretManagerException(String.format(
+                                "Could not download secret %s with label %s from cloud, you can "
+                                        + "attempt a re-fetch by redeploying secret manager", secretArn, label), e);
                     }
+                } catch (InterruptedException e) {
+                    throw e;
                 } catch (Exception e) {
                     throw new SecretManagerException(e);
                 }
@@ -190,7 +190,7 @@ public class SecretManager {
     }
 
     private AWSSecretResponse fetchAndEncryptAWSResponse(GetSecretValueRequest request)
-            throws SecretCryptoException, SecretManagerException, IOException {
+            throws SecretCryptoException, SecretManagerException, IOException, InterruptedException {
         GetSecretValueResponse result = secretClient.getSecret(request);
         // Save the secrets to local store for offline access
         String encodedSecretString = null;
