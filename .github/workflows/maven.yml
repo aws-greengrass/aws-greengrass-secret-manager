@@ -14,15 +14,17 @@ jobs:
       matrix:
         os: [ubuntu-latest, windows-latest]
     steps:
-      - uses: actions/checkout@v2
+      - uses: actions/checkout@v4
         with:
           fetch-depth: 0
       - uses: wagoid/commitlint-github-action@v4
         if: matrix.os == 'ubuntu-latest'
       - name: Set up JDK 1.8
-        uses: actions/setup-java@v1
+        uses: actions/setup-java@v4
         with:
-          java-version: 1.8
+          distribution: corretto
+          java-version: 8
+          cache: maven
       - run: rm -rf /tmp/*
         if: matrix.os == 'ubuntu-latest'
         continue-on-error: true
@@ -43,13 +45,13 @@ jobs:
         shell: cmd
         if: matrix.os == 'windows-latest'
       - name: Upload Failed Test Report
-        uses: actions/upload-artifact@v1.0.0
+        uses: actions/upload-artifact@v3
         if: failure()
         with:
           name: Failed Test Report
           path: target/surefire-reports
       - name: Upload Coverage
-        uses: actions/upload-artifact@v1.0.0
+        uses: actions/upload-artifact@v3
         if: matrix.os == 'ubuntu-latest'
         with:
           name: Coverage Report ${{ matrix.os }}
@@ -59,7 +61,7 @@ jobs:
         if: matrix.os == 'ubuntu-latest'
       - name: cobertura-report-unit-test
         if: matrix.os == 'ubuntu-latest'
-        uses: shaguptashaikh/cobertura-action@master
+        uses: 5monkeys/cobertura-action@v14
         continue-on-error: true
         with:
           # The GITHUB_TOKEN for this repo
@@ -78,3 +80,4 @@ jobs:
           show_class_names: true
           # Use a unique name for the report and comment
           report_name: Unit Tests Coverage Report
+          only_changed_files: true
