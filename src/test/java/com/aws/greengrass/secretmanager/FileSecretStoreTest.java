@@ -12,6 +12,7 @@ import com.aws.greengrass.secretmanager.exception.SecretManagerException;
 import com.aws.greengrass.secretmanager.kernel.KernelClient;
 import com.aws.greengrass.secretmanager.model.AWSSecretResponse;
 import com.aws.greengrass.secretmanager.model.SecretDocument;
+import com.aws.greengrass.secretmanager.store.FileSecretStore;
 import com.aws.greengrass.testcommons.testutilities.GGExtension;
 import com.aws.greengrass.util.Coerce;
 import com.fasterxml.jackson.databind.MapperFeature;
@@ -33,7 +34,7 @@ import java.util.UUID;
 
 import static com.aws.greengrass.lifecyclemanager.GreengrassService.RUNTIME_STORE_NAMESPACE_TOPIC;
 import static com.aws.greengrass.lifecyclemanager.GreengrassService.SERVICES_NAMESPACE_TOPIC;
-import static com.aws.greengrass.secretmanager.FileSecretDao.SECRET_RESPONSE_TOPIC;
+import static com.aws.greengrass.secretmanager.store.FileSecretStore.SECRET_RESPONSE_TOPIC;
 import static org.hamcrest.MatcherAssert.assertThat;
 import static org.hamcrest.Matchers.hasItem;
 import static org.junit.jupiter.api.Assertions.assertEquals;
@@ -46,7 +47,7 @@ import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 @ExtendWith({MockitoExtension.class, GGExtension.class})
-class FileSecretDaoTest {
+class FileSecretStoreTest {
     private final static String SECRET_NAME_1 = "secretA";
     private final static String SECRET_STRING_1 = "Its a secret!!";
     private final static String ARN_1 = "arn:aws:secretsmanager:us-east-1:9988977227:secret:snow-H9ySfh";
@@ -103,7 +104,7 @@ class FileSecretDaoTest {
 
     @Test
     void GIVEN_dao_store_WHEN_secrets_saved_THEN_get_returns_them() throws SecretManagerException, IOException {
-        FileSecretDao dao = new FileSecretDao(mockKernelClient);
+        FileSecretStore dao = new FileSecretStore(mockKernelClient);
         Topic mockTopic = mock(Topic.class);
         when(mockConfiguration.lookup(SERVICES_NAMESPACE_TOPIC,
                 SecretManagerService.SECRET_MANAGER_SERVICE_NAME, RUNTIME_STORE_NAMESPACE_TOPIC,
@@ -195,7 +196,7 @@ class FileSecretDaoTest {
 
     @Test
     void GIVEN_dao_store_WHEN_no_secret_saved_THEN_get_throws_exception() throws SecretManagerException {
-        FileSecretDao dao = new FileSecretDao(mockKernelClient);
+        FileSecretStore dao = new FileSecretStore(mockKernelClient);
         Topic mockTopic = mock(Topic.class);
         when(mockConfiguration.lookup(SERVICES_NAMESPACE_TOPIC,
                 SecretManagerService.SECRET_MANAGER_SERVICE_NAME, RUNTIME_STORE_NAMESPACE_TOPIC,
@@ -208,7 +209,7 @@ class FileSecretDaoTest {
 
     @Test
     void GIVEN_dao_store_WHEN_objectmapper_error_THEN_throws() throws SecretManagerException {
-        FileSecretDao dao = new FileSecretDao(mockKernelClient);
+        FileSecretStore dao = new FileSecretStore(mockKernelClient);
         Topic mockTopic = mock(Topic.class);
         when(mockConfiguration.lookup(SERVICES_NAMESPACE_TOPIC, SecretManagerService.SECRET_MANAGER_SERVICE_NAME,
                 RUNTIME_STORE_NAMESPACE_TOPIC, SECRET_RESPONSE_TOPIC)).thenReturn(mockTopic);

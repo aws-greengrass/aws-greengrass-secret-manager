@@ -3,11 +3,11 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-package com.aws.greengrass.secretmanager;
+package com.aws.greengrass.secretmanager.store;
 
 import com.aws.greengrass.secretmanager.exception.SecretManagerException;
 
-public interface SecretDao<V, T> {
+public interface SecretStore<V, T> {
     V getAll() throws SecretManagerException;
 
     void saveAll(V list) throws SecretManagerException;

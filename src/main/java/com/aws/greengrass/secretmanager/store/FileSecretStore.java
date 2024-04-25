@@ -3,9 +3,10 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-package com.aws.greengrass.secretmanager;
+package com.aws.greengrass.secretmanager.store;
 
 import com.aws.greengrass.config.Topic;
+import com.aws.greengrass.secretmanager.SecretManagerService;
 import com.aws.greengrass.secretmanager.exception.NoSecretFoundException;
 import com.aws.greengrass.secretmanager.exception.SecretManagerException;
 import com.aws.greengrass.secretmanager.kernel.KernelClient;
@@ -28,7 +29,7 @@ import static com.aws.greengrass.lifecyclemanager.GreengrassService.SERVICES_NAM
  * only a single thread can either read or write the store at any point of time. The class
  * is also immutable with all fields being final.
  */
-public class FileSecretDao implements SecretDao<SecretDocument, AWSSecretResponse> {
+public class FileSecretStore implements SecretStore<SecretDocument, AWSSecretResponse> {
     public static final String SECRET_RESPONSE_TOPIC = "secretResponse";
     private final KernelClient kernelClient;
     private static final ObjectMapper OBJECT_MAPPER =
@@ -40,7 +41,7 @@ public class FileSecretDao implements SecretDao<SecretDocument, AWSSecretRespons
      * @throws SecretManagerException if root dir does not exist
      */
     @Inject
-    public FileSecretDao(KernelClient kernelClient) throws SecretManagerException {
+    public FileSecretStore(KernelClient kernelClient) throws SecretManagerException {
         this.kernelClient = kernelClient;
     }
 

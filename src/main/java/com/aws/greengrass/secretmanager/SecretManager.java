@@ -17,6 +17,8 @@ import com.aws.greengrass.secretmanager.exception.v1.GetSecretException;
 import com.aws.greengrass.secretmanager.model.AWSSecretResponse;
 import com.aws.greengrass.secretmanager.model.SecretConfiguration;
 import com.aws.greengrass.secretmanager.model.SecretDocument;
+import com.aws.greengrass.secretmanager.store.FileSecretStore;
+import com.aws.greengrass.secretmanager.store.SecretStore;
 import com.aws.greengrass.security.SecurityService;
 import com.aws.greengrass.security.exceptions.ServiceUnavailableException;
 import com.aws.greengrass.util.RetryUtils;
@@ -64,7 +66,7 @@ public class SecretManager {
     private final ConcurrentHashMap<String, String> nameToArnMap = new ConcurrentHashMap<>();
 
     private final AWSSecretClient secretClient;
-    private final SecretDao<SecretDocument, AWSSecretResponse> secretDao;
+    private final SecretStore<SecretDocument, AWSSecretResponse> secretStore;
     @Nullable
     private Crypter crypter;
     private final Result<SecretCryptoException> initialized = new Result<>();
@@ -76,9 +78,9 @@ public class SecretManager {
      * @param dao          dao for persistent store.
      */
     @Inject
-    SecretManager(AWSSecretClient secretClient, SecurityService securityService, FileSecretDao dao,
+    SecretManager(AWSSecretClient secretClient, SecurityService securityService, FileSecretStore dao,
                   ExecutorService executor) {
-        this.secretDao = dao;
+        this.secretStore = dao;
         this.secretClient = secretClient;
 
         executor.execute(() -> loadCrypter(securityService));
@@ -112,8 +114,8 @@ public class SecretManager {
      * @param crypter      crypter for secrets.
      * @param dao          dao for persistent store.
      */
-    SecretManager(AWSSecretClient secretClient, Crypter crypter, FileSecretDao dao) {
-        this.secretDao = dao;
+    SecretManager(AWSSecretClient secretClient, Crypter crypter, FileSecretStore dao) {
+        this.secretStore = dao;
         this.secretClient = secretClient;
         this.crypter = crypter;
         this.initialized.set(null);
@@ -154,7 +156,7 @@ public class SecretManager {
                     AWSSecretResponse encryptedResult = fetchAndEncryptAWSResponse(request);
                     downloadedSecrets.add(encryptedResult);
                 } catch (IOException | SdkClientException e) {
-                    AWSSecretResponse secretFromDao = secretDao.get(secretArn, label);
+                    AWSSecretResponse secretFromDao = secretStore.get(secretArn, label);
                     if (secretFromDao != null) {
                         logger.atWarn().kv("secret", secretArn).kv("label", label)
                                 .log("Could not sync secret from cloud, but we have a local version which may work");
@@ -184,7 +186,7 @@ public class SecretManager {
                 }
             }
         }
-        secretDao.saveAll(SecretDocument.builder().secrets(downloadedSecrets).build());
+        secretStore.saveAll(SecretDocument.builder().secrets(downloadedSecrets).build());
         // Once the secrets are finished downloading, load it locally
         loadSecretsFromLocalStore();
     }
@@ -245,7 +247,7 @@ public class SecretManager {
     public void loadSecretsFromLocalStore() throws SecretManagerException {
         logger.atDebug("load-secret-local-store").log();
         // read the db
-        List<AWSSecretResponse> secrets = secretDao.getAll().getSecrets();
+        List<AWSSecretResponse> secrets = secretStore.getAll().getSecrets();
         nameToArnMap.clear();
         cache.clear();
         if (!Utils.isEmpty(secrets)) {
