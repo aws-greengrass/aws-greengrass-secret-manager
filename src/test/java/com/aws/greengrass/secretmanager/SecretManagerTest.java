@@ -19,6 +19,7 @@ import com.aws.greengrass.secretmanager.kernel.KernelClient;
 import com.aws.greengrass.secretmanager.model.AWSSecretResponse;
 import com.aws.greengrass.secretmanager.model.SecretConfiguration;
 import com.aws.greengrass.secretmanager.model.SecretDocument;
+import com.aws.greengrass.secretmanager.store.FileSecretStore;
 import com.aws.greengrass.security.SecurityService;
 import com.aws.greengrass.testcommons.testutilities.GGExtension;
 import com.aws.greengrass.util.EncryptionUtils;
@@ -107,7 +108,7 @@ class SecretManagerTest {
     private AWSSecretClient mockAWSSecretClient;
 
     @Mock
-    private FileSecretDao mockDao;
+    private FileSecretStore mockDao;
 
     @Mock
     private KernelClient mockKernelClient;
