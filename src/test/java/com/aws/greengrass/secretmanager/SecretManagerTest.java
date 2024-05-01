@@ -94,6 +94,7 @@ class SecretManagerTest {
     private static final String ARN_1 = "arn:aws:secretsmanager:us-east-1:999936977227:secret:randomSecret-74lYJh";
     private static final String ARN_2 = "arn:aws:secretsmanager:us-east-1:111136977227:secret:shhhhh-32lYsd";
     private static final String ARN_3 = "arn:aws-us-gov:secretsmanager:us-east-1:111136977227:secret:shhhhh-32lYsd";
+    private static final String PARTIAL_ARN = "arn:aws:secretsmanager:us-east-1:999936977227:secret:randomSecret";
 
     private String ENCRYPTED_SECRET_1;
     private String ENCRYPTED_SECRET_2;
@@ -131,6 +132,13 @@ class SecretManagerTest {
             add(secret1);
             add(secret2);
             add(secret3);
+        }};
+    }
+
+    private List<SecretConfiguration> getMockSecretsWithPartialArn() {
+        SecretConfiguration secret = SecretConfiguration.builder().arn(PARTIAL_ARN).build();
+        return new ArrayList<SecretConfiguration>() {{
+            add(secret);
         }};
     }
 
@@ -273,6 +281,28 @@ class SecretManagerTest {
 
         assertNull(getSecretValueResult.getSecretValue().getSecretString());
         assertArrayEquals(SECRET_VALUE_BINARY_3, getSecretValueResult.getSecretValue().getSecretBinary());
+    }
+
+    @Test
+    void GIVEN_secret_manager_WHEN_sync_from_cloud_with_partial_arn_THEN_secrets_are_loaded() throws Exception {
+        when(mockAWSSecretClient.getSecret(any())).thenReturn(getMockSecretA()).thenReturn(getMockSecretB());
+        List<AWSSecretResponse> storedSecrets = new ArrayList<>();
+        storedSecrets.add(getMockDaoSecretA());
+        when(mockDao.getAll()).thenReturn(SecretDocument.builder().secrets(storedSecrets).build());
+        SecretManager sm = new SecretManager(mockAWSSecretClient, crypter, mockDao);
+        sm.syncFromCloud(getMockSecretsWithPartialArn());
+
+        software.amazon.awssdk.aws.greengrass.model.GetSecretValueRequest request =
+                new software.amazon.awssdk.aws.greengrass.model.GetSecretValueRequest();
+        request.setSecretId(SECRET_NAME_1);
+        software.amazon.awssdk.aws.greengrass.model.GetSecretValueResponse getSecretValueResult = sm.getSecret(request);
+
+        assertArrayEquals(SECRET_VALUE_BINARY_1, getSecretValueResult.getSecretValue().getSecretBinary());
+        assertEquals(ARN_1, getSecretValueResult.getSecretId());
+        assertEquals(SECRET_VERSION_1, getSecretValueResult.getVersionId());
+        assertEquals(2, getSecretValueResult.getVersionStage().size());
+        assertEquals(LATEST_LABEL, getSecretValueResult.getVersionStage().get(0));
+        assertEquals(SECRET_LABEL_1, getSecretValueResult.getVersionStage().get(1));
     }
 
     @Test
