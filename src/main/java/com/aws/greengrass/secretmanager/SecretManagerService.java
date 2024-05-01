@@ -302,7 +302,7 @@ public class SecretManagerService extends PluginService {
                 ResourceNotFoundError rnf = new ResourceNotFoundError();
                 rnf.setMessage(e.getMessage());
                 rnf.setResourceType("secret");
-                throw new ResourceNotFoundError();
+                throw rnf;
             }
             throw new ServiceError(e.getMessage());
         }
