@@ -6,7 +6,6 @@
 package com.aws.greengrass.secretmanager;
 
 import com.aws.greengrass.authorization.AuthorizationHandler;
-import com.aws.greengrass.authorization.Permission;
 import com.aws.greengrass.authorization.exceptions.AuthorizationException;
 import com.aws.greengrass.config.ChildChanged;
 import com.aws.greengrass.config.Topic;
@@ -22,16 +21,11 @@ import com.aws.greengrass.secretmanager.exception.v1.GetSecretException;
 import com.aws.greengrass.secretmanager.model.SecretConfiguration;
 import com.aws.greengrass.secretmanager.model.v1.GetSecretValueError;
 import com.aws.greengrass.secretmanager.model.v1.GetSecretValueResult;
-import com.aws.greengrass.util.Coerce;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.MapperFeature;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import software.amazon.awssdk.aws.greengrass.GreengrassCoreIPCService;
-import software.amazon.awssdk.aws.greengrass.model.GetSecretValueResponse;
-import software.amazon.awssdk.aws.greengrass.model.ResourceNotFoundError;
-import software.amazon.awssdk.aws.greengrass.model.ServiceError;
-import software.amazon.awssdk.aws.greengrass.model.UnauthorizedError;
 
 import java.io.IOException;
 import java.util.ArrayList;
@@ -220,6 +214,7 @@ public class SecretManagerService extends PluginService {
      * @param request      v1 style get secret request
      * @return v1 style secret or error serialized as JSON bytes. If a serialization error occurs, null is returned.
      */
+    // Note: Do not rename/move this method around as it is used via reflection from the lambda-manager.
     public byte[] getSecret(String serviceName, byte[] request) {
         logger.atInfo().event("secret-access")
                 .kv("Principal", serviceName)
@@ -233,7 +228,8 @@ public class SecretManagerService extends PluginService {
             com.aws.greengrass.secretmanager.model.v1.GetSecretValueRequest getSecretValueRequest =
                     OBJECT_MAPPER.readValue(request,
                             com.aws.greengrass.secretmanager.model.v1.GetSecretValueRequest.class);
-            validateSecretIdAndDoAuthorization(GET_SECRET_VALUE, serviceName, getSecretValueRequest.getSecretId());
+            secretManagerIPCAgent.validateSecretIdAndDoAuthorization(GET_SECRET_VALUE, serviceName,
+                    getSecretValueRequest.getSecretId());
             GetSecretValueResult response = secretManager.getSecret(getSecretValueRequest);
 
             try {
@@ -275,53 +271,4 @@ public class SecretManagerService extends PluginService {
             return null;
         }
     }
-
-    /**
-     * Handles secret API calls from IPC.
-     *
-     * @param request     get secret request from IPC API
-     * @param serviceName component name of the request
-     * @return get secret response for IPC API
-     * @throws UnauthorizedError     if secret access is not authorized
-     * @throws ResourceNotFoundError if requested secret is not found locally
-     * @throws ServiceError          if kernel encountered errors while processing this request
-     */
-    public GetSecretValueResponse getSecretIPC(
-            software.amazon.awssdk.aws.greengrass.model.GetSecretValueRequest request, String serviceName) {
-        try {
-            validateSecretIdAndDoAuthorization(GET_SECRET_VALUE, serviceName, request.getSecretId());
-            logger.atInfo().event("secret-access").kv("Principal", serviceName).kv("secret", request.getSecretId())
-                    .log("requested secret");
-            return secretManager.getSecret(request);
-        } catch (AuthorizationException e) {
-            throw new UnauthorizedError(e.getMessage());
-        } catch (GetSecretException e) {
-            logger.atError().event("secret-access").kv("Principal", serviceName).kv("secret", request.getSecretId())
-                    .setCause(e).log("Error happened with secret access");
-            if (e.getStatus() == 404) {
-                ResourceNotFoundError rnf = new ResourceNotFoundError();
-                rnf.setMessage(e.getMessage());
-                rnf.setResourceType("secret");
-                throw rnf;
-            }
-            throw new ServiceError(e.getMessage());
-        }
-    }
-
-    private void validateSecretIdAndDoAuthorization(String opCode, String serviceName, String secretId)
-            throws AuthorizationException, GetSecretException {
-        String arn = secretManager.validateSecretId(secretId);
-        doAuthorization(opCode, serviceName, arn);
-    }
-
-    private void doAuthorization(String opCode, String serviceName, String secretId) throws AuthorizationException {
-        authorizationHandler.isAuthorized(
-                this.getName(),
-                Permission.builder()
-                        .principal(serviceName)
-                        .operation(opCode)
-                        .resource(secretId)
-                        .build());
-    }
-
 }
