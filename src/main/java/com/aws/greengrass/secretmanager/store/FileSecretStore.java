@@ -14,10 +14,13 @@ import com.aws.greengrass.secretmanager.model.AWSSecretResponse;
 import com.aws.greengrass.secretmanager.model.SecretDocument;
 import com.aws.greengrass.util.Coerce;
 import com.aws.greengrass.util.Utils;
+import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.MapperFeature;
 import com.fasterxml.jackson.databind.ObjectMapper;
 
 import java.io.IOException;
+import java.util.Iterator;
+import java.util.List;
 import javax.inject.Inject;
 
 import static com.aws.greengrass.lifecyclemanager.GreengrassService.RUNTIME_STORE_NAMESPACE_TOPIC;
@@ -88,8 +91,35 @@ public class FileSecretStore implements SecretStore<SecretDocument, AWSSecretRes
         }
     }
 
+    @Override
+    public void save(AWSSecretResponse encryptedResult) throws SecretManagerException, JsonProcessingException {
+        Topic secretTopic = kernelClient.getConfig()
+                .lookup(SERVICES_NAMESPACE_TOPIC, SecretManagerService.SECRET_MANAGER_SERVICE_NAME,
+                        RUNTIME_STORE_NAMESPACE_TOPIC, SECRET_RESPONSE_TOPIC);
+        SecretDocument doc = OBJECT_MAPPER.readValue(secretTopic.toPOJO().toString(), SecretDocument.class);
+        List<AWSSecretResponse> responseList = doc.getSecrets();
+        // If the existing secrets in the store contain the version stages(labels) of the newly added secret, we have
+        // to remove those labels as labels are unique across different versions of a secret.
+        Iterator<AWSSecretResponse> secretsItr =
+                responseList.stream().filter(secret -> secret.getArn().equals(encryptedResult.getArn())).iterator();
+        encryptedResult.getVersionStages().forEach((label -> {
+            while (secretsItr.hasNext()) {
+                AWSSecretResponse response = secretsItr.next();
+                response.getVersionStages().remove(label);
+            }
+        }));
+        responseList.add(encryptedResult);
+        SecretDocument updatedDoc = SecretDocument.builder().secrets(responseList).build();
+        try {
+            secretTopic.withValue(OBJECT_MAPPER.writeValueAsString(updatedDoc));
+        } catch (JsonProcessingException e) {
+            throw new SecretManagerException("Cannot write secret response to store", e);
+        }
+    }
+
     /**
      * Save a secret document to underlying file store.
+     *
      * @param doc {@link SecretDocument} containing list of secrets to persist
      * @throws SecretManagerException when there is any issue writing to the store.
      */
