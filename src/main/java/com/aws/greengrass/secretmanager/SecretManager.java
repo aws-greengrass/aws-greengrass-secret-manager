@@ -21,6 +21,7 @@ import com.aws.greengrass.secretmanager.store.FileSecretStore;
 import com.aws.greengrass.secretmanager.store.SecretStore;
 import com.aws.greengrass.security.SecurityService;
 import com.aws.greengrass.security.exceptions.ServiceUnavailableException;
+import com.aws.greengrass.util.Coerce;
 import com.aws.greengrass.util.RetryUtils;
 import com.aws.greengrass.util.Utils;
 import software.amazon.awssdk.aws.greengrass.model.SecretValue;
@@ -314,20 +315,22 @@ public class SecretManager {
         }
     }
 
-    private GetSecretValueResponse getSecret(String secretId, String versionId, String versionStage)
-        throws GetSecretException {
-        logger.atDebug().kv("secretId", secretId).kv("versionId", versionId)
-                .kv("versionStage", versionStage).log("get-secret");
-        String arn = validateSecretId(secretId);
-
-        // Both are optional
-        if (!Utils.isEmpty(versionId) && !Utils.isEmpty(versionStage)) {
-            logger.atError().kv("secretId", secretId).kv("versionId", versionId)
-                    .kv("versionStage", versionStage).log("Both secret version and id are set");
-            throw new GetSecretException(400,
-                    "Both versionId and Stage are set in the request");
+    private void refreshSecretFromCloud(String arn, String versionStage) {
+        // TODO: Make this a non-blocking op.
+        String versionLabel = Utils.isEmpty(versionStage) ? LATEST_LABEL : versionStage;
+        GetSecretValueRequest request =
+                GetSecretValueRequest.builder().secretId(arn).versionStage(versionLabel).build();
+        try {
+            AWSSecretResponse encryptedResult = fetchAndEncryptAWSResponse(request);
+            secretStore.save(encryptedResult);
+            loadSecretsFromLocalStore();
+        } catch (SecretCryptoException | SecretManagerException | IOException e) {
+            logger.atError().cause(e).log("Unable to refresh secret from cloud.");
         }
+    }
 
+    private GetSecretValueResponse getSecretFromCache(String secretId, String arn, String versionId,
+                                                      String versionStage) throws GetSecretException {
         if (!Utils.isEmpty(versionId)) {
             if (!cache.containsKey(arn + versionId)) {
                 String errorStr = "Version Id " + versionId + " not found for secret " + secretId;
@@ -353,6 +356,29 @@ public class SecretManager {
         return cache.get(arn + LATEST_LABEL);
     }
 
+    private GetSecretValueResponse getSecret(String secretId, String versionId, String versionStage,
+                                             boolean refreshSecret) throws GetSecretException {
+        logger.atDebug().kv("secretId", secretId).kv("versionId", versionId).kv("versionStage", versionStage)
+                .log("get-secret");
+        String arn = validateSecretId(secretId);
+
+        // Both are optional
+        if (!Utils.isEmpty(versionId) && !Utils.isEmpty(versionStage)) {
+            logger.atError().kv("secretId", secretId).kv("versionId", versionId).kv("versionStage", versionStage)
+                    .log("Both secret version and id are set");
+            throw new GetSecretException(400, "Both versionId and Stage are set in the request");
+        }
+        /*
+         If refresh is set to true, try fetching the secret from cloud. This will update the local store and cache as
+          well. Refresh secrets by label only. If refreshing the secret fails for any reason, we fall back to local
+          store.
+         */
+        if (refreshSecret && Utils.isEmpty(versionId)) {
+            refreshSecretFromCloud(arn, versionStage);
+        }
+        return getSecretFromCache(secretId, arn, versionId, versionStage);
+    }
+
     /**
      * Get v1 style secret, to support lambdas using v1 SDK to get secrets.
      * @param request       v1 sdk request from lambda to get secret
@@ -361,8 +387,8 @@ public class SecretManager {
      */
     public com.aws.greengrass.secretmanager.model.v1.GetSecretValueResult
         getSecret(com.aws.greengrass.secretmanager.model.v1.GetSecretValueRequest request) throws GetSecretException {
-            GetSecretValueResponse secretResponse = getSecret(request.getSecretId(), request.getVersionId(),
-                    request.getVersionStage());
+        GetSecretValueResponse secretResponse =
+                getSecret(request.getSecretId(), request.getVersionId(), request.getVersionStage(), false);
             return translateModeltov1(secretResponse);
     }
 
@@ -376,8 +402,9 @@ public class SecretManager {
     public software.amazon.awssdk.aws.greengrass.model.GetSecretValueResponse
     getSecret(software.amazon.awssdk.aws.greengrass.model.GetSecretValueRequest request)
             throws GetSecretException {
-            GetSecretValueResponse secretResponse = getSecret(request.getSecretId(), request.getVersionId(),
-                    request.getVersionStage());
+        GetSecretValueResponse secretResponse =
+                getSecret(request.getSecretId(), request.getVersionId(), request.getVersionStage(),
+                        Coerce.toBoolean(request.isRefresh()));
             return translateModeltoIpc(secretResponse);
     }
 
