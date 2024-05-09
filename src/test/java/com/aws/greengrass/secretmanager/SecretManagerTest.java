@@ -112,9 +112,12 @@ class SecretManagerTest {
     private FileSecretStore mockDao;
 
     @Mock
+    private DeviceConfiguration mockDeviceConfiguration;
+
+    @Mock
     private KernelClient mockKernelClient;
 
-    private final SecurityService mockSecurityService = spy(new SecurityService(mock(DeviceConfiguration.class)));
+    private final SecurityService mockSecurityService = spy(new SecurityService(mockDeviceConfiguration));
 
     private final ExecutorService executorService = Executors.newSingleThreadExecutor();
 
@@ -258,7 +261,7 @@ class SecretManagerTest {
         storedSecrets.add(getMockDaoSecretBWithSecretBinary());
         storedSecrets.add(getMockDaoSecretCWithSecretBinary());
         when(mockDao.getAll()).thenReturn(SecretDocument.builder().secrets(storedSecrets).build());
-        SecretManager sm = new SecretManager(mockAWSSecretClient, crypter, mockDao);
+        SecretManager sm = new SecretManager(mockAWSSecretClient, mockSecurityService, mockDao, mockDeviceConfiguration);
         sm.syncFromCloud(getMockSecrets());
 
         software.amazon.awssdk.aws.greengrass.model.GetSecretValueRequest request =
@@ -290,7 +293,7 @@ class SecretManagerTest {
         List<AWSSecretResponse> storedSecrets = new ArrayList<>();
         storedSecrets.add(getMockDaoSecretA());
         when(mockDao.getAll()).thenReturn(SecretDocument.builder().secrets(storedSecrets).build());
-        SecretManager sm = new SecretManager(mockAWSSecretClient, crypter, mockDao);
+        SecretManager sm = new SecretManager(mockAWSSecretClient, mockSecurityService, mockDao, mockDeviceConfiguration);
         sm.syncFromCloud(getMockSecretsWithPartialArn());
 
         software.amazon.awssdk.aws.greengrass.model.GetSecretValueRequest request =
@@ -307,13 +310,41 @@ class SecretManagerTest {
     }
 
     @Test
+    void GIVEN_secret_manager_WHEN_ipc_req_with_refresh_throws_ex_THEN_load_from_cache(ExtensionContext context)
+            throws Exception {
+        ignoreExceptionOfType(context, SecretManagerException.class);
+        when(mockAWSSecretClient.getSecret(any())).thenReturn(getMockSecretA()).thenReturn(getMockSecretB());
+        List<AWSSecretResponse> storedSecrets = new ArrayList<>();
+        storedSecrets.add(getMockDaoSecretA());
+        when(mockDao.getAll()).thenReturn(SecretDocument.builder().secrets(storedSecrets).build());
+        SecretManager sm = new SecretManager(mockAWSSecretClient, mockSecurityService, mockDao, mockDeviceConfiguration);
+        sm.syncFromCloud(getMockSecrets());
+
+        software.amazon.awssdk.aws.greengrass.model.GetSecretValueRequest request =
+                new software.amazon.awssdk.aws.greengrass.model.GetSecretValueRequest();
+
+        request.setSecretId(SECRET_NAME_1);
+        request.setRefresh(true);
+
+        when(mockAWSSecretClient.getSecret(any())).thenThrow(SecretManagerException.class);
+        software.amazon.awssdk.aws.greengrass.model.GetSecretValueResponse response = sm.getSecret(request);
+
+        assertArrayEquals(SECRET_VALUE_BINARY_1, response.getSecretValue().getSecretBinary());
+        assertEquals(ARN_1, response.getSecretId());
+        assertEquals(SECRET_VERSION_1, response.getVersionId());
+        assertEquals(2, response.getVersionStage().size());
+        assertEquals(LATEST_LABEL, response.getVersionStage().get(0));
+        assertEquals(SECRET_LABEL_1, response.getVersionStage().get(1));
+    }
+
+    @Test
     void GIVEN_secret_manager_WHEN_sync_from_cloud_THEN_secrets_are_loaded() throws Exception {
         when(mockAWSSecretClient.getSecret(any())).thenReturn(getMockSecretA()).thenReturn(getMockSecretB());
         List<AWSSecretResponse> storedSecrets = new ArrayList<>();
         storedSecrets.add(getMockDaoSecretA());
         storedSecrets.add(getMockDaoSecretB());
         when(mockDao.getAll()).thenReturn(SecretDocument.builder().secrets(storedSecrets).build());
-        SecretManager sm = new SecretManager(mockAWSSecretClient, crypter, mockDao);
+        SecretManager sm = new SecretManager(mockAWSSecretClient, mockSecurityService, mockDao, mockDeviceConfiguration);
         sm.syncFromCloud(getMockSecrets());
 
         software.amazon.awssdk.aws.greengrass.model.GetSecretValueRequest request =
@@ -398,7 +429,7 @@ class SecretManagerTest {
         storedSecrets.add(getMockDaoSecretAWithSecretString());
         storedSecrets.add(getMockDaoSecretBWithSecretBinary());
         when(mockDao.getAll()).thenReturn(SecretDocument.builder().secrets(storedSecrets).build());
-        SecretManager sm = new SecretManager(mockAWSSecretClient, crypter, mockDao);
+        SecretManager sm = new SecretManager(mockAWSSecretClient, mockSecurityService, mockDao, mockDeviceConfiguration);
         sm.syncFromCloud(getMockSecrets());
 
         com.aws.greengrass.secretmanager.model.v1.GetSecretValueRequest request =
@@ -483,12 +514,13 @@ class SecretManagerTest {
         assertThat(getSecretValueResult.getVersionStages(), hasItem(SECRET_LABEL_2));
     }
 
+
     @Test
     void GIVEN_secret_manager_WHEN_invalid_arn_THEN_secrets_are_not_loaded(ExtensionContext context) throws Exception {
         ignoreExceptionOfType(context, SecretManagerException.class);
         when(mockDao.getAll()).thenReturn(mock(SecretDocument.class));
         when(mockAWSSecretClient.getSecret(any())).thenReturn(getMockSecretA());
-        SecretManager sm = new SecretManager(mockAWSSecretClient, mockSecurityService, mockDao, executorService);
+        SecretManager sm = new SecretManager(mockAWSSecretClient, mockSecurityService, mockDao, mockDeviceConfiguration);
         String invalidArn = "randomArn";
         SecretConfiguration secret1 = SecretConfiguration.builder().arn(ARN_1).build();
         SecretConfiguration secret2 = SecretConfiguration.builder().arn(invalidArn)
@@ -514,9 +546,8 @@ class SecretManagerTest {
         List<AWSSecretResponse> storedSecrets = new ArrayList<>();
         storedSecrets.add(getMockDaoSecretA());
         when(mockDao.getAll()).thenReturn(SecretDocument.builder().secrets(storedSecrets).build());
-        SecretManager sm = new SecretManager(mockAWSSecretClient, mockSecurityService, mockDao, executorService);
+        SecretManager sm = new SecretManager(mockAWSSecretClient, mockSecurityService, mockDao, mockDeviceConfiguration);
 
-        sm.waitForInitialization();
         // Load one secret from local and verify
         sm.loadSecretsFromLocalStore();
         software.amazon.awssdk.aws.greengrass.model.GetSecretValueRequest request =
@@ -546,7 +577,7 @@ class SecretManagerTest {
         ignoreExceptionOfType(context, SecretManagerException.class);
         when(mockDao.getAll()).thenReturn(mock(SecretDocument.class));
         when(mockAWSSecretClient.getSecret(any())).thenThrow(SecretManagerException.class);
-        SecretManager sm = new SecretManager(mockAWSSecretClient, mockSecurityService, mockDao, executorService);
+        SecretManager sm = new SecretManager(mockAWSSecretClient, mockSecurityService, mockDao, mockDeviceConfiguration);
         // Secrets should not be loaded as the secret fails and should throw SecretManagerException
         assertThrows(SecretManagerException.class, () -> sm.syncFromCloud(getMockSecrets()));
         verify(mockAWSSecretClient, times(1)).getSecret(any());
@@ -573,7 +604,7 @@ class SecretManagerTest {
 
     @Test
     void GIVEN_secret_manager_WHEN_network_error_and_new_secret_THEN_throws() throws Exception {
-        SecretManager sm = new SecretManager(mockAWSSecretClient, mockSecurityService, mockDao, executorService);
+        SecretManager sm = new SecretManager(mockAWSSecretClient, mockSecurityService, mockDao, mockDeviceConfiguration);
         SecretConfiguration secret1 = SecretConfiguration.builder().arn(ARN_1).build();
         List<SecretConfiguration> configuredSecret1 = Collections.singletonList(secret1);
 
@@ -584,7 +615,7 @@ class SecretManagerTest {
     @Test
     void GIVEN_secret_manager_WHEN_network_error_and_existing_secret_THEN_not_throw() throws Exception {
         when(mockDao.getAll()).thenReturn(mock(SecretDocument.class));
-        SecretManager sm = new SecretManager(mockAWSSecretClient, mockSecurityService, mockDao, executorService);
+        SecretManager sm = new SecretManager(mockAWSSecretClient, mockSecurityService, mockDao, mockDeviceConfiguration);
         SecretConfiguration secret1 = SecretConfiguration.builder().arn(ARN_1).build();
         List<SecretConfiguration> configuredSecret1 = Collections.singletonList(secret1);
 
@@ -600,7 +631,7 @@ class SecretManagerTest {
     @Test
     void GIVEN_secret_manager_WHEN_some_label_error_THEN_throws_for_non_network_error() throws Exception {
         when(mockDao.getAll()).thenReturn(mock(SecretDocument.class));
-        SecretManager sm = new SecretManager(mockAWSSecretClient, mockSecurityService, mockDao, executorService);
+        SecretManager sm = new SecretManager(mockAWSSecretClient, mockSecurityService, mockDao, mockDeviceConfiguration);
         SecretConfiguration secret =
                 SecretConfiguration.builder().arn(ARN_2).labels(Arrays.asList(LATEST_LABEL, SECRET_LABEL_1)).build();
         List<SecretConfiguration> configuredSecret = Collections.singletonList(secret);
@@ -649,7 +680,7 @@ class SecretManagerTest {
         when(mockAWSSecretClient.getSecret(any())).thenReturn(getMockSecretA());
         doThrow(SecretManagerException.class).when(mockDao).getAll();
 
-        SecretManager sm = new SecretManager(mockAWSSecretClient, mockSecurityService, mockDao, executorService);
+        SecretManager sm = new SecretManager(mockAWSSecretClient, mockSecurityService, mockDao, mockDeviceConfiguration);
         assertThrows(SecretManagerException.class, () -> sm.syncFromCloud(getMockSecrets()));
         assertThrows(SecretManagerException.class, sm::loadSecretsFromLocalStore);
     }
@@ -667,8 +698,7 @@ class SecretManagerTest {
         SecretDocument diskSecrets = SecretDocument.builder().secrets(listSecrets).build();
         when(mockDao.getAll()).thenReturn(diskSecrets);
 
-        SecretManager sm = new SecretManager(mockAWSSecretClient, mockSecurityService, mockDao, executorService);
-        sm.waitForInitialization();
+        SecretManager sm = new SecretManager(mockAWSSecretClient, mockSecurityService, mockDao, mockDeviceConfiguration);
         // This will throw as encrypted string is invalid format for crypter
         assertThrows(SecretManagerException.class, sm::loadSecretsFromLocalStore);
     }
@@ -680,7 +710,7 @@ class SecretManagerTest {
         when(mockDao.getAll()).thenReturn(mock(SecretDocument.class));
         when(mockAWSSecretClient.getSecret(awsClientRequestCaptor.capture())).thenReturn(getMockSecretA())
                 .thenReturn(getMockSecretB());
-        SecretManager sm = new SecretManager(mockAWSSecretClient, mockSecurityService, mockDao, executorService);
+        SecretManager sm = new SecretManager(mockAWSSecretClient, mockSecurityService, mockDao, mockDeviceConfiguration);
         sm.syncFromCloud(getMockSecrets());
         verify(mockDao, times(1)).saveAll(documentArgumentCaptor.capture());
 
@@ -701,13 +731,13 @@ class SecretManagerTest {
     void GIVEN_secret_manager_WHEN_invalid_key_THEN_secret_manager_not_instantiated() throws URISyntaxException {
         reset(mockKernelClient);
         when(mockSecurityService.getDeviceIdentityPrivateKeyURI()).thenReturn(new URI("file:///tmp"));
-        SecretManager manager = new SecretManager(mockAWSSecretClient, mockSecurityService, mockDao, executorService);
-        assertThrows(SecretCryptoException.class, manager::waitForInitialization);
+        SecretManager manager = new SecretManager(mockAWSSecretClient, mockSecurityService, mockDao, mockDeviceConfiguration);
+        assertThrows(SecretCryptoException.class, manager::getCrypter);
     }
 
     @Test
     void GIVEN_secret_manager_WHEN_get_called_with_invalid_request_THEN_proper_errors_are_returned() throws Exception {
-        SecretManager sm = new SecretManager(mockAWSSecretClient, crypter, mockDao);
+        SecretManager sm = new SecretManager(mockAWSSecretClient, mockSecurityService, mockDao, mockDeviceConfiguration);
         software.amazon.awssdk.aws.greengrass.model.GetSecretValueRequest request =
                 new software.amazon.awssdk.aws.greengrass.model.GetSecretValueRequest();
         try {
