@@ -89,18 +89,12 @@ public class SecretManagerService extends PluginService {
     protected void install() throws InterruptedException {
         super.install();
         // subscribe will invoke serviceChanged right away to sync from cloud
-        // GG_NEEDS_REVIEW: TODO: Subscribe on thing key updates
         this.config.lookupTopics(CONFIGURATION_CONFIG_KEY).subscribe(this.handleConfigurationChangeLambda);
     }
 
     private void syncFromCloud() throws SecretManagerException, InterruptedException {
         Topic secretParam = this.config.lookup(CONFIGURATION_CONFIG_KEY, SECRETS_TOPIC);
         try {
-            if (secretParam == null) {
-                logger.atInfo().kv("service", SECRET_MANAGER_SERVICE_NAME).log("No secrets configured");
-                secretManager.syncFromCloud(new ArrayList<>());
-                return;
-            }
             List<SecretConfiguration> configuredSecrets = OBJECT_MAPPER.convertValue(secretParam.toPOJO(),
                     new TypeReference<List<SecretConfiguration>>() {
                     });
@@ -110,7 +104,7 @@ public class SecretManagerService extends PluginService {
                 logger.atError().kv("secrets", secretParam.toString()).log("Unable to parse secrets configured");
             }
         } catch (IllegalArgumentException e) {
-            logger.atError().kv("node", secretParam == null ? null : secretParam.getFullName())
+            logger.atError().kv("node", secretParam.getFullName())
                     .kv("value", secretParam).setCause(e).log("Unable to parse secrets configured");
         }
     }
@@ -156,12 +150,6 @@ public class SecretManagerService extends PluginService {
 
     @Override
     public void startup() throws InterruptedException {
-        try {
-            secretManager.waitForInitialization();
-        } catch (SecretCryptoException e) {
-            serviceErrored(e);
-            return;
-        }
         // Wait for the initial sync to complete before marking ourselves as running
         Future<?> syncFut = syncFuture.get();
         if (syncFut != null) {

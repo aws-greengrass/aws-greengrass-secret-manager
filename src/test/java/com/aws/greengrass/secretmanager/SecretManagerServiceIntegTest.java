@@ -3,20 +3,19 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-package com.aws.greengrass.integrationtests;
-
-import com.aws.greengrass.deployment.DeviceConfiguration;
+package com.aws.greengrass.secretmanager;
 
 import com.aws.greengrass.dependency.State;
+import com.aws.greengrass.deployment.DeviceConfiguration;
+import com.aws.greengrass.integrationtests.BaseITCase;
 import com.aws.greengrass.integrationtests.ipc.IPCTestUtils;
 import com.aws.greengrass.lifecyclemanager.GreengrassService;
 import com.aws.greengrass.lifecyclemanager.Kernel;
-import com.aws.greengrass.secretmanager.AWSSecretClient;
-import com.aws.greengrass.secretmanager.SecretManagerService;
-
+import com.aws.greengrass.secretmanager.exception.SecretCryptoException;
 import com.aws.greengrass.secretmanager.exception.SecretManagerException;
 import com.aws.greengrass.secretmanager.exception.v1.GetSecretException;
 import com.aws.greengrass.security.SecurityService;
+import com.aws.greengrass.security.exceptions.KeyLoadingException;
 import com.aws.greengrass.testcommons.testutilities.GGExtension;
 import com.aws.greengrass.util.EncryptionUtils;
 import org.junit.jupiter.api.AfterEach;
@@ -25,8 +24,6 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.junit.jupiter.api.extension.ExtensionContext;
 import org.junit.jupiter.api.io.TempDir;
-
-
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import software.amazon.awssdk.aws.greengrass.GreengrassCoreIPCClientV2;
@@ -44,14 +41,16 @@ import java.time.Instant;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
 
+import static com.aws.greengrass.deployment.DeviceConfiguration.DEVICE_PARAM_PRIVATE_KEY_PATH;
+import static com.aws.greengrass.deployment.DeviceConfiguration.SYSTEM_NAMESPACE_KEY;
 import static com.aws.greengrass.secretmanager.TestUtil.ignoreErrors;
 import static com.aws.greengrass.testcommons.testutilities.ExceptionLogProtector.ignoreExceptionOfType;
-
 import static org.hamcrest.MatcherAssert.assertThat;
 import static org.hamcrest.Matchers.containsString;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
+import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.lenient;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.spy;
@@ -124,7 +123,7 @@ public class SecretManagerServiceIntegTest extends BaseITCase {
     @Test
     void GIVEN_secret_service_WHEN_started_with_bad_parameter_config_THEN_starts_successfully(ExtensionContext context)
             throws Exception {
-        ignoreExceptionOfType(context, java.lang.IllegalArgumentException.class);
+        ignoreExceptionOfType(context, IllegalArgumentException.class);
         startKernelWithConfig("badConfig.yaml", State.RUNNING);
     }
 
@@ -157,6 +156,45 @@ public class SecretManagerServiceIntegTest extends BaseITCase {
         assertThat(e.getMessage(), containsString("SecretId absent in the request"));
     }
 
+
+    @Test
+    void GIVEN_secret_service_And_device_config_changes_throw_ex_When_ipc_handler_called_THEN_return_from_cache() throws Exception {
+        startKernelWithConfig("config.yaml", State.RUNNING);
+        lenient().doThrow(KeyLoadingException.class).when(mockSecurityService).getKeyPair(any(),
+                any());
+        kernel.getConfig().lookup(SYSTEM_NAMESPACE_KEY, DEVICE_PARAM_PRIVATE_KEY_PATH).withValue("someKey.pem");
+        software.amazon.awssdk.aws.greengrass.model.GetSecretValueRequest secretExists =
+                new software.amazon.awssdk.aws.greengrass.model.GetSecretValueRequest();
+        secretExists.setSecretId("randomSecret");
+        secretExists.setVersionId(VERSION_ID);
+
+        GreengrassCoreIPCClientV2 clientV2 = IPCTestUtils.connectV2Client(kernel, "ComponentRequestingSecrets");
+        GetSecretValueResponse response= clientV2.getSecretValue(secretExists);
+        assertEquals("arn:aws:secretsmanager:us-east-1:999936977227:secret:randomSecret-74lYJh", response.getSecretId());
+        assertEquals(VERSION_ID, response.getVersionId());
+        assertTrue(response.getVersionStage().contains(CURRENT_LABEL));
+        assertEquals("secretValue", response.getSecretValue().getSecretString());
+    }
+
+    @Test
+    void GIVEN_secret_service_And_device_config_changes_throw_ex_When_ipc_handler_with_refresh_called_THEN_return_from_cache(ExtensionContext context) throws Exception {
+        ignoreExceptionOfType(context, SecretCryptoException.class);
+        startKernelWithConfig("config.yaml", State.RUNNING);
+        lenient().doThrow(KeyLoadingException.class).when(mockSecurityService).getKeyPair(any(),
+                any());
+        kernel.getConfig().lookup(SYSTEM_NAMESPACE_KEY, DEVICE_PARAM_PRIVATE_KEY_PATH).withValue("someKey.pem");
+        software.amazon.awssdk.aws.greengrass.model.GetSecretValueRequest secretExists =
+                new software.amazon.awssdk.aws.greengrass.model.GetSecretValueRequest();
+        secretExists.setSecretId("randomSecret");
+        secretExists.setVersionId(null);
+        secretExists.setRefresh(true);
+        GreengrassCoreIPCClientV2 clientV2 = IPCTestUtils.connectV2Client(kernel, "ComponentRequestingSecrets");
+        GetSecretValueResponse response= clientV2.getSecretValue(secretExists);
+        assertEquals("arn:aws:secretsmanager:us-east-1:999936977227:secret:randomSecret-74lYJh", response.getSecretId());
+        assertEquals(VERSION_ID, response.getVersionId());
+        assertTrue(response.getVersionStage().contains(CURRENT_LABEL));
+        assertEquals("secretValue", response.getSecretValue().getSecretString());
+    }
 
     @Test
     void GIVEN_secret_service_WHEN_ipc_handler_called_THEN_correct_response_returned() throws Exception {

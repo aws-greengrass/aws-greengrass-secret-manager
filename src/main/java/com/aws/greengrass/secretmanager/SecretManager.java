@@ -5,6 +5,8 @@
 
 package com.aws.greengrass.secretmanager;
 
+import com.aws.greengrass.config.Node;
+import com.aws.greengrass.deployment.DeviceConfiguration;
 import com.aws.greengrass.logging.api.Logger;
 import com.aws.greengrass.logging.impl.LogManager;
 import com.aws.greengrass.secretmanager.crypto.Crypter;
@@ -22,6 +24,8 @@ import com.aws.greengrass.secretmanager.store.SecretStore;
 import com.aws.greengrass.security.SecurityService;
 import com.aws.greengrass.security.exceptions.ServiceUnavailableException;
 import com.aws.greengrass.util.Coerce;
+import com.aws.greengrass.util.LockFactory;
+import com.aws.greengrass.util.LockScope;
 import com.aws.greengrass.util.RetryUtils;
 import com.aws.greengrass.util.Utils;
 import software.amazon.awssdk.aws.greengrass.model.SecretValue;
@@ -35,6 +39,7 @@ import java.net.URI;
 import java.nio.ByteBuffer;
 import java.nio.charset.StandardCharsets;
 import java.security.KeyPair;
+import java.time.Duration;
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.Base64;
@@ -42,18 +47,23 @@ import java.util.Collections;
 import java.util.Date;
 import java.util.HashSet;
 import java.util.List;
+import java.util.Objects;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
-import java.util.concurrent.ExecutorService;
+import java.util.concurrent.atomic.AtomicReference;
+import java.util.concurrent.locks.Lock;
 import java.util.regex.Pattern;
 import javax.annotation.Nullable;
 import javax.inject.Inject;
 
+import static com.aws.greengrass.deployment.DeviceConfiguration.DEVICE_PARAM_CERTIFICATE_FILE_PATH;
+import static com.aws.greengrass.deployment.DeviceConfiguration.DEVICE_PARAM_PRIVATE_KEY_PATH;
+
 /**
- * Class which holds the business logic for secret management. This class always holds a copy of
- * actual AWS secrets response in memory to serve requests. Since v1 and v2 IPC models are different
- * this class directly translates the AWS responses in memory to v1/v2 models as part of IPC requests.
- * Secrets are stored encrypted for availability across restarts. In memory copy is always plain text.
+ * Class which holds the business logic for secret management. This class always holds a copy of actual AWS secrets
+ * response in memory to serve requests. Since v1 and v2 IPC models are different this class directly translates the AWS
+ * responses in memory to v1/v2 models as part of IPC requests. Secrets are stored encrypted for availability across
+ * restarts. In memory copy is always plain text.
  */
 public class SecretManager {
     private static final String LATEST_LABEL = "AWSCURRENT";
@@ -61,6 +71,7 @@ public class SecretManager {
             "arn:([^:]+):secretsmanager:[a-z0-9\\-]+:[0-9]{12}:secret:([a-zA-Z0-9\\\\]+/)*"
                     + "[a-zA-Z0-9/_+=,.@\\-]+(-[a-zA-Z0-9]+)?";
     private static final String secretNotFoundErr = "Secret not found ";
+    private final SecurityService securityService;
     private final Logger logger = LogManager.getLogger(SecretManager.class);
     // Cache which holds aws secrets result
     private final ConcurrentHashMap<String, GetSecretValueResponse> cache = new ConcurrentHashMap<>();
@@ -68,75 +79,81 @@ public class SecretManager {
 
     private final AWSSecretClient secretClient;
     private final SecretStore<SecretDocument, AWSSecretResponse> secretStore;
-    @Nullable
-    private Crypter crypter;
-    private final Result<SecretCryptoException> initialized = new Result<>();
+    private final AtomicReference<Crypter> crypter = new AtomicReference<>();
+    private final Lock lock = LockFactory.newReentrantLock(this);
 
     /**
      * Constructor.
-     * @param secretClient client for aws secrets.
+     *
+     * @param secretClient    client for aws secrets.
      * @param securityService security service.
-     * @param dao          dao for persistent store.
+     * @param dao             dao for persistent store.
      */
     @Inject
     SecretManager(AWSSecretClient secretClient, SecurityService securityService, FileSecretStore dao,
-                  ExecutorService executor) {
+                  DeviceConfiguration deviceConfiguration) {
         this.secretStore = dao;
         this.secretClient = secretClient;
-
-        executor.execute(() -> loadCrypter(securityService));
+        this.securityService = securityService;
+        deviceConfiguration.onAnyChange(((whatHappened, node) -> {
+            if (validUpdate(node, DEVICE_PARAM_CERTIFICATE_FILE_PATH) || validUpdate(node,
+                    DEVICE_PARAM_PRIVATE_KEY_PATH)) {
+                // TODO: If the device creds change, then cache and local store should be updated as well as the keys
+                //  used for encrypting and decrypting the secrets have changed.
+                try (LockScope ls = LockScope.lock(lock)) {
+                    crypter.set(null);
+                }
+            }
+        }));
     }
 
-    private void loadCrypter(SecurityService securityService) {
+    private boolean validUpdate(Node node, String key) {
+        return node != null && node.childOf(key) && Utils.isNotEmpty(Coerce.toString(node));
+    }
+
+    protected Crypter getCrypter() throws SecretCryptoException {
+        try (LockScope ls = LockScope.lock(lock)) {
+            if (crypter.get() == null) {
+                try {
+                    loadCrypter();
+                } catch (Exception e) {
+                    throw new SecretCryptoException("Unable to load crypter", e);
+                }
+            }
+            return crypter.get();
+        }
+    }
+
+    private void loadCrypter() throws Exception {
         try {
             URI privateKeyUri = securityService.getDeviceIdentityPrivateKeyURI();
             URI certUri = securityService.getDeviceIdentityCertificateURI();
-            KeyPair kp = RetryUtils.runWithRetry(RetryUtils.RetryConfig.builder().maxAttempt(Integer.MAX_VALUE)
-                            .retryableExceptions(Collections.singletonList(ServiceUnavailableException.class)).build(),
-                    () -> securityService.getKeyPair(privateKeyUri, certUri), "get-keypair",
-                    logger);
+            KeyPair kp =
+                    RetryUtils.runWithRetry(RetryUtils.RetryConfig.builder().maxRetryInterval(Duration.ofSeconds(30))
+                                    .initialRetryInterval(Duration.ofSeconds(10)).maxAttempt(10)
+                                    .retryableExceptions(Collections.singletonList(ServiceUnavailableException.class))
+                                    .build(),
+                    () -> securityService.getKeyPair(privateKeyUri, certUri), "get-keypair", logger);
             MasterKey masterKey = RSAMasterKey.createInstance(kp.getPublic(), kp.getPrivate());
             KeyChain keyChain = new KeyChain();
             keyChain.addMasterKey(masterKey);
-            this.crypter = new Crypter(keyChain);
-            this.initialized.set(null);
-        } catch (SecretCryptoException e) {
-            this.initialized.set(e);
+            crypter.set(new Crypter(keyChain));
         } catch (InterruptedException e) {
             Thread.currentThread().interrupt();
-        } catch (Exception e) {
-            this.initialized.set(new SecretCryptoException(e));
         }
     }
 
     /**
-     * Constructor for unit testing.
-     * @param secretClient client for aws secrets.
-     * @param crypter      crypter for secrets.
-     * @param dao          dao for persistent store.
-     */
-    SecretManager(AWSSecretClient secretClient, Crypter crypter, FileSecretStore dao) {
-        this.secretStore = dao;
-        this.secretClient = secretClient;
-        this.crypter = crypter;
-        this.initialized.set(null);
-    }
-
-    /**
-     * Syncs secret manager by downloading secrets from cloud and then stores it locally.
-     * This is used when configuration changes and secrets have to be re downloaded.
+     * Syncs secret manager by downloading secrets from cloud and then stores it locally. This is used when
+     * configuration changes and secrets have to be re downloaded.
+     *
      * @param configuredSecrets List of secrets that are to be downloaded
      * @throws SecretManagerException when there are issues reading/writing to disk
-     * @throws InterruptedException if thread is interrupted while running
+     * @throws InterruptedException   if thread is interrupted while running
      */
     public void syncFromCloud(List<SecretConfiguration> configuredSecrets)
             throws SecretManagerException, InterruptedException {
         logger.atDebug("sync-secret-from-cloud").log();
-        try {
-            waitForInitialization();
-        } catch (SecretCryptoException e) {
-            throw new SecretManagerException(e);
-        }
         List<AWSSecretResponse> downloadedSecrets = new ArrayList<>();
         for (SecretConfiguration secretConfig : configuredSecrets) {
             String secretArn = secretConfig.getArn();
@@ -198,16 +215,13 @@ public class SecretManager {
         // Save the secrets to local store for offline access
         String encodedSecretString = null;
         if (result.secretString() != null) {
-            byte[] encryptedSecretString = crypter.encrypt(
-                    result.secretString().getBytes(StandardCharsets.UTF_8),
-                    result.arn());
+            byte[] encryptedSecretString =
+                    getCrypter().encrypt(result.secretString().getBytes(StandardCharsets.UTF_8), result.arn());
             encodedSecretString = Base64.getEncoder().encodeToString(encryptedSecretString);
         }
         String encodedSecretBinary = null;
         if (result.secretBinary() != null) {
-            byte[] encryptedSecretBinary = crypter.encrypt(
-                    result.secretBinary().asByteArray(),
-                    result.arn());
+            byte[] encryptedSecretBinary = getCrypter().encrypt(result.secretBinary().asByteArray(), result.arn());
             encodedSecretBinary = Base64.getEncoder().encodeToString(encryptedSecretBinary);
         }
          // reuse all fields except the secret value, replace secret value with encrypted value
@@ -220,25 +234,6 @@ public class SecretManager {
                 .versionId(result.versionId())
                 .versionStages(result.versionStages())
                 .build();
-    }
-
-    /**
-     * Wait until interrupted for the crypter to be initialized.
-     *
-     * @throws SecretCryptoException if initialization failed
-     * @throws InterruptedException  if the thread is interrupted while waiting
-     */
-    void waitForInitialization() throws SecretCryptoException, InterruptedException {
-        synchronized (initialized) {
-            while (!initialized.isSet()) {
-                initialized.wait();
-            }
-        }
-        if (initialized.isSet()) {
-            if (initialized.getValue() != null) {
-                throw initialized.getValue();
-            }
-        }
     }
 
     /**
@@ -262,17 +257,17 @@ public class SecretManager {
     private GetSecretValueResponse decrypt(AWSSecretResponse awsSecretResponse) throws SecretCryptoException {
         String decryptedSecretString = null;
         if (awsSecretResponse.getEncryptedSecretString() != null) {
-            byte[] decryptedSecret = crypter.decrypt(
-                    Base64.getDecoder().decode(awsSecretResponse.getEncryptedSecretString()),
-                    awsSecretResponse.getArn());
+            byte[] decryptedSecret =
+                    getCrypter().decrypt(Base64.getDecoder().decode(awsSecretResponse.getEncryptedSecretString()),
+                            awsSecretResponse.getArn());
             decryptedSecretString = new String(decryptedSecret, StandardCharsets.UTF_8);
         }
 
         SdkBytes decryptedSecretBinary = null;
         if (awsSecretResponse.getEncryptedSecretBinary() != null) {
-            byte[] decryptedSecret = crypter.decrypt(
-                    Base64.getDecoder().decode(awsSecretResponse.getEncryptedSecretBinary()),
-                    awsSecretResponse.getArn());
+            byte[] decryptedSecret =
+                    getCrypter().decrypt(Base64.getDecoder().decode(awsSecretResponse.getEncryptedSecretBinary()),
+                            awsSecretResponse.getArn());
             decryptedSecretBinary = SdkBytes.fromByteArray(decryptedSecret);
         }
 
@@ -316,7 +311,6 @@ public class SecretManager {
     }
 
     private void refreshSecretFromCloud(String arn, String versionStage) {
-        // TODO: Make this a non-blocking op.
         String versionLabel = Utils.isEmpty(versionStage) ? LATEST_LABEL : versionStage;
         GetSecretValueRequest request =
                 GetSecretValueRequest.builder().secretId(arn).versionStage(versionLabel).build();
