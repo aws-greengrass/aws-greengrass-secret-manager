@@ -20,6 +20,7 @@ import software.amazon.awssdk.aws.greengrass.model.UnauthorizedError;
 import software.amazon.awssdk.eventstreamrpc.OperationContinuationHandlerContext;
 import software.amazon.awssdk.eventstreamrpc.model.EventStreamJsonMessage;
 
+import java.util.concurrent.CompletableFuture;
 import javax.inject.Inject;
 
 import static software.amazon.awssdk.aws.greengrass.GreengrassCoreIPCService.GET_SECRET_VALUE;
@@ -76,9 +77,9 @@ public class SecretManagerIPCAgent {
         public GetSecretValueResponse handleRequest(GetSecretValueRequest request) {
             logger.atDebug("ipc-get-secret-request").log();
             try {
-                validateSecretIdAndDoAuthorization(GET_SECRET_VALUE, serviceName, request.getSecretId());
                 logger.atInfo().event("secret-access").kv("Principal", serviceName).kv("secret", request.getSecretId())
                         .log("requested secret");
+                validateSecretIdAndDoAuthorization(GET_SECRET_VALUE, serviceName, request.getSecretId());
                 return secretManager.getSecret(request);
             } catch (AuthorizationException e) {
                 throw new UnauthorizedError(e.getMessage());
@@ -93,6 +94,12 @@ public class SecretManagerIPCAgent {
                 }
                 throw new ServiceError(e.getMessage());
             }
+        }
+
+        @Override
+        public CompletableFuture<GetSecretValueResponse> handleRequestAsync(GetSecretValueRequest request) {
+            // TODO: Limit the no of simultaneous requests using a separate threadpool with configurable size
+            return CompletableFuture.supplyAsync(() -> handleRequest(request));
         }
 
         @Override
