@@ -147,7 +147,7 @@ public class SecretManagerService extends PluginService {
             // Ignore. This means we started with empty configuration
             logger.atDebug().setEventType("secret-manager-startup").log("No secrets configured");
         } catch (SecretManagerException e) {
-            // No need to log anything here, it is already logged by loadSecretsFromLocalStore
+            // No need to log anything here, it is already logged by reloadCache
 
             // If there was a crypto issue then we probably need to re-encrypt the secrets, so we will wait for the sync
             // future to complete without error since it would have started up already due to the subscribe() call

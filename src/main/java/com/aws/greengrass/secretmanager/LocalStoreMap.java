@@ -59,8 +59,7 @@ public class LocalStoreMap {
         deviceConfiguration.onAnyChange(((whatHappened, node) -> {
             if (validUpdate(node, DEVICE_PARAM_CERTIFICATE_FILE_PATH) || validUpdate(node,
                     DEVICE_PARAM_PRIVATE_KEY_PATH)) {
-                // TODO: If the device creds change, then cache and local store should be updated as well as the keys
-                //  used for encrypting and decrypting the secrets have changed.
+                // TODO: Trigger downloading new secrets from cloud and encrypt them with the new creds.
                 try (LockScope ls = LockScope.lock(lock)) {
                     crypter.set(null);
                 }
@@ -127,7 +126,6 @@ public class LocalStoreMap {
         }
 
         try {
-            // update cache whenever the store is updated.
             secretStore.saveAll(new SecretDocument(responses));
         } catch (SecretManagerException e) {
             logger.atError().log("Unable to update the local store.");
@@ -270,30 +268,32 @@ public class LocalStoreMap {
      * }
      */
     private void reloadSecretsFromLocalStore() {
+        SecretDocument doc;
         try {
-            SecretDocument doc = secretStore.getAll();
-            if (doc == null || doc.getSecrets() == null || doc.getSecrets().isEmpty()) {
-                return;
-            }
-            for (AWSSecretResponse secretResponse : doc.getSecrets()) {
-                try {
-                    decrypt(secretResponse);
-                } catch (SecretCryptoException e) {
-                    logger.atInfo().kv("secretArn", secretResponse.getArn()).kv("label", secretResponse.getVersionId())
-                            .log("Unable to decrypt the secret in local store.");
-                    continue;
-                }
-                secrets.putIfAbsent(secretResponse.getArn(), new Labels(new HashMap<>()));
-                secretResponse.getVersionStages().forEach((label) -> {
-                    secrets.get(secretResponse.getArn()).responseMap.put(label, secretResponse);
-                });
-            }
+             doc = secretStore.getAll();
         } catch (SecretManagerException e) {
             logger.atWarn().log("Cannot read secrets from the local store");
+            return;
+        }
+        if (doc == null || doc.getSecrets() == null || doc.getSecrets().isEmpty()) {
+            return;
+        }
+        for (AWSSecretResponse secretResponse : doc.getSecrets()) {
+            try {
+                decrypt(secretResponse);
+            } catch (SecretCryptoException e) {
+                logger.atWarn().kv("secretArn", secretResponse.getArn()).kv("label", secretResponse.getVersionId())
+                        .log("Unable to decrypt the secret in local store.");
+                continue;
+            }
+            secrets.putIfAbsent(secretResponse.getArn(), new Labels(new HashMap<>()));
+            secretResponse.getVersionStages().forEach((label) -> {
+                secrets.get(secretResponse.getArn()).responseMap.put(label, secretResponse);
+            });
         }
     }
 
-    public static class Labels {
+    private static class Labels {
         HashMap<String, AWSSecretResponse> responseMap;
 
         public Labels(HashMap<String, AWSSecretResponse> responseMap) {
