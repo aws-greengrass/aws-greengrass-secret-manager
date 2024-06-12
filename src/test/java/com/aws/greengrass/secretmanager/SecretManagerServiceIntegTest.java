@@ -179,6 +179,7 @@ public class SecretManagerServiceIntegTest extends BaseITCase {
     @Test
     void GIVEN_secret_service_And_device_config_changes_throw_ex_When_ipc_handler_with_refresh_called_THEN_return_from_cache(ExtensionContext context) throws Exception {
         ignoreExceptionOfType(context, SecretCryptoException.class);
+        ignoreExceptionOfType(context, GetSecretException.class);
         startKernelWithConfig("config.yaml", State.RUNNING);
         lenient().doThrow(KeyLoadingException.class).when(mockSecurityService).getKeyPair(any(),
                 any());

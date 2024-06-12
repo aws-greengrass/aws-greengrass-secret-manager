@@ -5,59 +5,40 @@
 
 package com.aws.greengrass.secretmanager;
 
-import com.aws.greengrass.config.Node;
-import com.aws.greengrass.deployment.DeviceConfiguration;
+import com.aws.greengrass.config.Topic;
 import com.aws.greengrass.logging.api.Logger;
 import com.aws.greengrass.logging.impl.LogManager;
-import com.aws.greengrass.secretmanager.crypto.Crypter;
-import com.aws.greengrass.secretmanager.crypto.KeyChain;
-import com.aws.greengrass.secretmanager.crypto.MasterKey;
-import com.aws.greengrass.secretmanager.crypto.RSAMasterKey;
 import com.aws.greengrass.secretmanager.exception.SecretCryptoException;
 import com.aws.greengrass.secretmanager.exception.SecretManagerException;
 import com.aws.greengrass.secretmanager.exception.v1.GetSecretException;
+import com.aws.greengrass.secretmanager.kernel.KernelClient;
 import com.aws.greengrass.secretmanager.model.AWSSecretResponse;
 import com.aws.greengrass.secretmanager.model.SecretConfiguration;
 import com.aws.greengrass.secretmanager.model.SecretDocument;
 import com.aws.greengrass.secretmanager.store.FileSecretStore;
 import com.aws.greengrass.secretmanager.store.SecretStore;
-import com.aws.greengrass.security.SecurityService;
-import com.aws.greengrass.security.exceptions.ServiceUnavailableException;
 import com.aws.greengrass.util.Coerce;
-import com.aws.greengrass.util.LockFactory;
-import com.aws.greengrass.util.LockScope;
-import com.aws.greengrass.util.RetryUtils;
 import com.aws.greengrass.util.Utils;
+import com.fasterxml.jackson.core.type.TypeReference;
+import com.fasterxml.jackson.databind.MapperFeature;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import software.amazon.awssdk.aws.greengrass.model.SecretValue;
-import software.amazon.awssdk.core.SdkBytes;
-import software.amazon.awssdk.core.exception.SdkClientException;
 import software.amazon.awssdk.services.secretsmanager.model.GetSecretValueRequest;
 import software.amazon.awssdk.services.secretsmanager.model.GetSecretValueResponse;
 
 import java.io.IOException;
-import java.net.URI;
 import java.nio.ByteBuffer;
-import java.nio.charset.StandardCharsets;
-import java.security.KeyPair;
-import java.time.Duration;
-import java.time.Instant;
 import java.util.ArrayList;
-import java.util.Base64;
 import java.util.Collections;
 import java.util.Date;
-import java.util.HashSet;
 import java.util.List;
 import java.util.Objects;
-import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
-import java.util.concurrent.atomic.AtomicReference;
-import java.util.concurrent.locks.Lock;
 import java.util.regex.Pattern;
-import javax.annotation.Nullable;
 import javax.inject.Inject;
 
-import static com.aws.greengrass.deployment.DeviceConfiguration.DEVICE_PARAM_CERTIFICATE_FILE_PATH;
-import static com.aws.greengrass.deployment.DeviceConfiguration.DEVICE_PARAM_PRIVATE_KEY_PATH;
+import static com.aws.greengrass.componentmanager.KernelConfigResolver.CONFIGURATION_CONFIG_KEY;
+import static com.aws.greengrass.secretmanager.SecretManagerService.SECRETS_TOPIC;
 
 /**
  * Class which holds the business logic for secret management. This class always holds a copy of actual AWS secrets
@@ -71,7 +52,6 @@ public class SecretManager {
             "arn:([^:]+):secretsmanager:[a-z0-9\\-]+:[0-9]{12}:secret:([a-zA-Z0-9\\\\]+/)*"
                     + "[a-zA-Z0-9/_+=,.@\\-]+(-[a-zA-Z0-9]+)?";
     private static final String secretNotFoundErr = "Secret not found ";
-    private final SecurityService securityService;
     private final Logger logger = LogManager.getLogger(SecretManager.class);
     // Cache which holds aws secrets result
     private final ConcurrentHashMap<String, GetSecretValueResponse> cache = new ConcurrentHashMap<>();
@@ -79,168 +59,80 @@ public class SecretManager {
 
     private final AWSSecretClient secretClient;
     private final SecretStore<SecretDocument, AWSSecretResponse> secretStore;
-    private final AtomicReference<Crypter> crypter = new AtomicReference<>();
-    private final Lock lock = LockFactory.newReentrantLock(this);
+    private final LocalStoreMap localStoreMap;
+    private final KernelClient kernelClient;
+    private static final ObjectMapper OBJECT_MAPPER =
+            new ObjectMapper().configure(MapperFeature.ACCEPT_CASE_INSENSITIVE_PROPERTIES, true);
 
     /**
      * Constructor.
      *
-     * @param secretClient    client for aws secrets.
-     * @param securityService security service.
-     * @param dao             dao for persistent store.
+     * @param secretClient client for aws secrets.
+     * @param dao          dao for persistent store.
      */
     @Inject
-    SecretManager(AWSSecretClient secretClient, SecurityService securityService, FileSecretStore dao,
-                  DeviceConfiguration deviceConfiguration) {
+    SecretManager(AWSSecretClient secretClient, FileSecretStore dao, KernelClient kernelClient, LocalStoreMap map) {
         this.secretStore = dao;
         this.secretClient = secretClient;
-        this.securityService = securityService;
-        deviceConfiguration.onAnyChange(((whatHappened, node) -> {
-            if (validUpdate(node, DEVICE_PARAM_CERTIFICATE_FILE_PATH) || validUpdate(node,
-                    DEVICE_PARAM_PRIVATE_KEY_PATH)) {
-                // TODO: If the device creds change, then cache and local store should be updated as well as the keys
-                //  used for encrypting and decrypting the secrets have changed.
-                try (LockScope ls = LockScope.lock(lock)) {
-                    crypter.set(null);
-                }
-            }
-        }));
+        this.localStoreMap = map;
+        this.kernelClient = kernelClient;
     }
 
-    private boolean validUpdate(Node node, String key) {
-        return node != null && node.childOf(key) && Utils.isNotEmpty(Coerce.toString(node));
-    }
-
-    protected Crypter getCrypter() throws SecretCryptoException {
-        try (LockScope ls = LockScope.lock(lock)) {
-            if (crypter.get() == null) {
-                try {
-                    loadCrypter();
-                } catch (Exception e) {
-                    throw new SecretCryptoException("Unable to load crypter", e);
-                }
-            }
-            return crypter.get();
-        }
-    }
-
-    private void loadCrypter() throws Exception {
+    private List<SecretConfiguration> getSecretConfiguration() {
+        Topic secretParam =
+                this.kernelClient.getConfig().lookupTopics("services", SecretManagerService.SECRET_MANAGER_SERVICE_NAME)
+                        .lookup(CONFIGURATION_CONFIG_KEY, SECRETS_TOPIC);
         try {
-            URI privateKeyUri = securityService.getDeviceIdentityPrivateKeyURI();
-            URI certUri = securityService.getDeviceIdentityCertificateURI();
-            KeyPair kp =
-                    RetryUtils.runWithRetry(RetryUtils.RetryConfig.builder().maxRetryInterval(Duration.ofSeconds(30))
-                                    .initialRetryInterval(Duration.ofSeconds(10)).maxAttempt(10)
-                                    .retryableExceptions(Collections.singletonList(ServiceUnavailableException.class))
-                                    .build(),
-                    () -> securityService.getKeyPair(privateKeyUri, certUri), "get-keypair", logger);
-            MasterKey masterKey = RSAMasterKey.createInstance(kp.getPublic(), kp.getPrivate());
-            KeyChain keyChain = new KeyChain();
-            keyChain.addMasterKey(masterKey);
-            crypter.set(new Crypter(keyChain));
-        } catch (InterruptedException e) {
-            Thread.currentThread().interrupt();
+            List<SecretConfiguration> configuredSecrets =
+                    OBJECT_MAPPER.convertValue(secretParam.toPOJO(), new TypeReference<List<SecretConfiguration>>() {
+                    });
+            if (!Objects.isNull(configuredSecrets)) {
+                configuredSecrets.forEach((secret) -> {
+                    if (secret.getLabels() == null) {
+                        secret.setLabels(Collections.singletonList(LATEST_LABEL));
+                    }
+                    if (!secret.getLabels().contains(LATEST_LABEL)) {
+                        secret.getLabels().add(LATEST_LABEL);
+                    }
+                });
+                return configuredSecrets;
+            }
+            logger.atError().kv("secrets", secretParam.toString()).log("Unable to parse secrets configured");
+        } catch (IllegalArgumentException e) {
+            logger.atError().kv("node", secretParam.getFullName()).kv("value", secretParam).setCause(e)
+                    .log("Unable to parse secrets configured");
         }
+        return new ArrayList<>();
     }
 
     /**
-     * Syncs secret manager by downloading secrets from cloud and then stores it locally. This is used when
-     * configuration changes and secrets have to be re downloaded.
-     *
-     * @param configuredSecrets List of secrets that are to be downloaded
-     * @throws SecretManagerException when there are issues reading/writing to disk
-     * @throws InterruptedException   if thread is interrupted while running
+     * When the component is installed, it firsts cleans up/syncs the existing local secrets as per the component
+     * configuration. It then tries to download latest secret from cloud for each configured secret-label. It then
+     * updates the local store with that secret and refreshes the cache.
      */
-    public void syncFromCloud(List<SecretConfiguration> configuredSecrets)
-            throws SecretManagerException, InterruptedException {
-        logger.atDebug("sync-secret-from-cloud").log();
-        List<AWSSecretResponse> downloadedSecrets = new ArrayList<>();
-        for (SecretConfiguration secretConfig : configuredSecrets) {
-            String secretArn = secretConfig.getArn();
-            if (!Pattern.matches(VALID_SECRET_ARN_PATTERN, secretArn)) {
-                logger.atWarn().kv("Secret ", secretArn).log("Skipping invalid secret arn configured");
+    public void syncFromCloud() {
+        // Contains secrets that are successfully decrypted from the local store.
+        List<SecretConfiguration> secretConfiguration = getSecretConfiguration();
+        localStoreMap.syncWithConfig(secretConfiguration);
+        for (SecretConfiguration configuredSecret : secretConfiguration) {
+            String arn = configuredSecret.getArn();
+            if (!Pattern.matches(VALID_SECRET_ARN_PATTERN, arn)) {
+                logger.atWarn().kv("Secret ", arn).log("Skipping invalid secret arn configured");
                 continue;
             }
-            // Labels are optional
-            Set<String> labelsToDownload = new HashSet<>();
-            if (!Utils.isEmpty(secretConfig.getLabels())) {
-                labelsToDownload.addAll(secretConfig.getLabels());
-            }
-            labelsToDownload.add(LATEST_LABEL);
-            for (String label : labelsToDownload) {
-                GetSecretValueRequest request = GetSecretValueRequest.builder().secretId(secretArn)
-                        .versionStage(label).build();
-                try {
-                    AWSSecretResponse encryptedResult = fetchAndEncryptAWSResponse(request);
-                    downloadedSecrets.add(encryptedResult);
-                } catch (IOException | SdkClientException e) {
-                    AWSSecretResponse secretFromDao = secretStore.get(secretArn, label);
-                    if (secretFromDao != null) {
-                        logger.atWarn().kv("secret", secretArn).kv("label", label)
-                                .log("Could not sync secret from cloud, but we have a local version which may work");
-                        // We couldn't sync it from the cloud, try loading it from local copy
-                        try {
-                            // Ensure that we're able to decrypt it. If we are unable to decrypt it
-                            // then we have no more fallbacks and the customer needs to fix the issue.
-                            decrypt(secretFromDao);
-                            downloadedSecrets.add(secretFromDao);
-                            logger.atDebug().kv("secret", secretArn).kv("label", label)
-                                    .log("Secret configuration is not changed. Loaded from local store");
-                        } catch (SecretCryptoException ex) {
-                            e.addSuppressed(ex);
-                            throw new SecretManagerException(
-                                    String.format("Could not download secret %s with label %s from cloud, you can "
-                                            + "attempt a re-fetch by redeploying secret manager", secretArn, label),
-                                    e);
-                        }
-                    } else {
-                        throw new SecretManagerException(
-                                String.format("Could not download secret %s with label %s from cloud, you can "
-                                        + "attempt a re-fetch by redeploying secret manager", secretArn, label),
-                                e);
-                    }
-                } catch (Exception e) {
-                    throw new SecretManagerException(e);
-                }
-            }
+            configuredSecret.getLabels().forEach((label) -> {
+                // Download latest secret from cloud for each configured label
+                refreshSecretFromCloud(arn, label);
+            });
         }
-        secretStore.saveAll(SecretDocument.builder().secrets(downloadedSecrets).build());
-        // Once the secrets are finished downloading, load it locally
-        loadSecretsFromLocalStore();
-    }
-
-    private AWSSecretResponse fetchAndEncryptAWSResponse(GetSecretValueRequest request)
-            throws SecretCryptoException, SecretManagerException, IOException {
-        GetSecretValueResponse result = secretClient.getSecret(request);
-        // Save the secrets to local store for offline access
-        String encodedSecretString = null;
-        if (result.secretString() != null) {
-            byte[] encryptedSecretString =
-                    getCrypter().encrypt(result.secretString().getBytes(StandardCharsets.UTF_8), result.arn());
-            encodedSecretString = Base64.getEncoder().encodeToString(encryptedSecretString);
-        }
-        String encodedSecretBinary = null;
-        if (result.secretBinary() != null) {
-            byte[] encryptedSecretBinary = getCrypter().encrypt(result.secretBinary().asByteArray(), result.arn());
-            encodedSecretBinary = Base64.getEncoder().encodeToString(encryptedSecretBinary);
-        }
-         // reuse all fields except the secret value, replace secret value with encrypted value
-         return AWSSecretResponse.builder()
-                .encryptedSecretString(encodedSecretString)
-                .encryptedSecretBinary(encodedSecretBinary)
-                .name(result.name())
-                .arn(result.arn())
-                .createdDate(result.createdDate().toEpochMilli())
-                .versionId(result.versionId())
-                .versionStages(result.versionStages())
-                .build();
     }
 
     /**
      * load the secrets from a local store. This is used across restarts to load secrets from store.
+     *
      * @throws SecretManagerException when there are issues reading from disk
      */
-    public void loadSecretsFromLocalStore() throws SecretManagerException {
+    public void reloadCache() throws SecretManagerException {
         logger.atDebug("load-secret-local-store").log();
         // read the db
         List<AWSSecretResponse> secrets = secretStore.getAll().getSecrets();
@@ -252,34 +144,6 @@ public class SecretManager {
                 loadCache(secretResult);
             }
         }
-    }
-
-    private GetSecretValueResponse decrypt(AWSSecretResponse awsSecretResponse) throws SecretCryptoException {
-        String decryptedSecretString = null;
-        if (awsSecretResponse.getEncryptedSecretString() != null) {
-            byte[] decryptedSecret =
-                    getCrypter().decrypt(Base64.getDecoder().decode(awsSecretResponse.getEncryptedSecretString()),
-                            awsSecretResponse.getArn());
-            decryptedSecretString = new String(decryptedSecret, StandardCharsets.UTF_8);
-        }
-
-        SdkBytes decryptedSecretBinary = null;
-        if (awsSecretResponse.getEncryptedSecretBinary() != null) {
-            byte[] decryptedSecret =
-                    getCrypter().decrypt(Base64.getDecoder().decode(awsSecretResponse.getEncryptedSecretBinary()),
-                            awsSecretResponse.getArn());
-            decryptedSecretBinary = SdkBytes.fromByteArray(decryptedSecret);
-        }
-
-        return GetSecretValueResponse.builder()
-                .secretString(decryptedSecretString)
-                .secretBinary(decryptedSecretBinary)
-                .name(awsSecretResponse.getName())
-                .arn(awsSecretResponse.getArn())
-                .createdDate(Instant.ofEpochMilli(awsSecretResponse.getCreatedDate()))
-                .versionId(awsSecretResponse.getVersionId())
-                .versionStages(awsSecretResponse.getVersionStages())
-                .build();
     }
 
     /*
@@ -294,7 +158,7 @@ public class SecretManager {
             throws SecretManagerException {
         GetSecretValueResponse decryptedResponse = null;
         try {
-            decryptedResponse = decrypt(awsSecretResponse);
+            decryptedResponse = localStoreMap.decrypt(awsSecretResponse);
         } catch (SecretCryptoException e) {
             // This should never happen ideally
             logger.atError().kv("secret",
@@ -312,14 +176,22 @@ public class SecretManager {
 
     private void refreshSecretFromCloud(String arn, String versionStage) {
         String versionLabel = Utils.isEmpty(versionStage) ? LATEST_LABEL : versionStage;
+        List<SecretConfiguration> configurations = getSecretConfiguration();
+        boolean isSecretLabelConfigured = configurations.stream().anyMatch(
+                (secret) -> secret.getArn().equalsIgnoreCase(arn) && secret.getLabels().contains(versionStage));
+        // If the requested secret is not  configured, then do not download.
+        if (!Utils.isEmpty(versionStage) && !isSecretLabelConfigured) {
+            logger.atWarn().log("Not downloading the secret from cloud it is not configured.");
+            return;
+        }
         GetSecretValueRequest request =
                 GetSecretValueRequest.builder().secretId(arn).versionStage(versionLabel).build();
         try {
-            AWSSecretResponse encryptedResult = fetchAndEncryptAWSResponse(request);
-            secretStore.save(encryptedResult);
-            loadSecretsFromLocalStore();
+            localStoreMap.updateWithSecret(secretClient.getSecret(request), getSecretConfiguration());
+            // Reload cache with every secret update
+            reloadCache();
         } catch (SecretCryptoException | SecretManagerException | IOException e) {
-            logger.atError().cause(e).log("Unable to refresh secret from cloud.");
+            logger.atError().cause(e).log("Unable to refresh secret from cloud. Local store will not be updated");
         }
     }
 
@@ -370,7 +242,23 @@ public class SecretManager {
         if (refreshSecret && Utils.isEmpty(versionId)) {
             refreshSecretFromCloud(arn, versionStage);
         }
-        return getSecretFromCache(secretId, arn, versionId, versionStage);
+        try {
+            return getSecretFromCache(secretId, arn, versionId, versionStage);
+        } catch (GetSecretException ex) {
+            if (ex.getStatus() == 404 && Utils.isEmpty(versionId)) {
+                // If secret is not found in the cache, then try to fetch latest one from the cloud
+                try {
+                    logger.atDebug().kv("secretId", secretId).kv("label", versionStage).kv("version", versionId)
+                            .log("Secret not found on disk. Trying to fetch from cloud");
+                    refreshSecretFromCloud(arn, versionStage);
+                } catch (Exception e) {
+                    logger.atWarn().cause(e).kv("secretId", secretId).kv("label", versionStage).kv("version", versionId)
+                            .log("Secret not found on disk. Failed to refresh latest secret from cloud");
+                    throw ex;
+                }
+            }
+            return getSecretFromCache(secretId, arn, versionId, versionStage);
+        }
     }
 
     /**

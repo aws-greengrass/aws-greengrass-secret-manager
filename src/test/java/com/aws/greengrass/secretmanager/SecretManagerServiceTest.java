@@ -114,7 +114,7 @@ public class SecretManagerServiceTest {
     void GIVEN_secret_service_WHEN_load_secret_fails_THEN_service_errors(ExtensionContext context) throws Exception {
         ignoreExceptionOfType(context, SecretManagerException.class);
 
-        doThrow(SecretManagerException.class).when(mockSecretManager).loadSecretsFromLocalStore();
+        doThrow(SecretManagerException.class).when(mockSecretManager).reloadCache();
         startKernelWithConfig("config.yaml", State.ERRORED);
     }
 
@@ -123,9 +123,9 @@ public class SecretManagerServiceTest {
         ignoreExceptionOfType(context, SecretManagerException.class);
 
         SecretManagerException ex = new SecretManagerException(new SecretCryptoException("Bad"));
-        doThrow(ex).when(mockSecretManager).loadSecretsFromLocalStore();
+        doThrow(ex).when(mockSecretManager).reloadCache();
         startKernelWithConfig("config.yaml", State.RUNNING);
-        verify(mockSecretManager).syncFromCloud(any());
+        verify(mockSecretManager).syncFromCloud();
     }
 
     private com.aws.greengrass.secretmanager.model.v1.GetSecretValueResult convertSecret(byte[] bytes)
