@@ -190,7 +190,7 @@ public class SecretManager {
             localStoreMap.updateWithSecret(secretClient.getSecret(request), getSecretConfiguration());
             // Reload cache with every secret update
             reloadCache();
-        } catch (SecretCryptoException | SecretManagerException | IOException e) {
+        } catch (SecretCryptoException | SecretManagerException  e) {
             logger.atError().cause(e).log("Unable to refresh secret from cloud. Local store will not be updated");
         }
     }
@@ -247,15 +247,9 @@ public class SecretManager {
         } catch (GetSecretException ex) {
             if (ex.getStatus() == 404 && Utils.isEmpty(versionId)) {
                 // If secret is not found in the cache, then try to fetch latest one from the cloud
-                try {
-                    logger.atDebug().kv("secretId", secretId).kv("label", versionStage).kv("version", versionId)
-                            .log("Secret not found on disk. Trying to fetch from cloud");
-                    refreshSecretFromCloud(arn, versionStage);
-                } catch (Exception e) {
-                    logger.atWarn().cause(e).kv("secretId", secretId).kv("label", versionStage).kv("version", versionId)
-                            .log("Secret not found on disk. Failed to refresh latest secret from cloud");
-                    throw ex;
-                }
+                logger.atDebug().kv("secretId", secretId).kv("label", versionStage).kv("version", versionId)
+                        .log("Secret not found on disk. Trying to fetch from cloud");
+                refreshSecretFromCloud(arn, versionStage);
             }
             return getSecretFromCache(secretId, arn, versionId, versionStage);
         }
