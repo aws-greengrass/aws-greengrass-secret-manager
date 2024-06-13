@@ -15,14 +15,4 @@ public class GetSecretException extends Exception {
         super(err);
         this.status = status;
     }
-
-    public GetSecretException(int status, Exception err) {
-        super(err);
-        this.status = status;
-    }
-
-    public GetSecretException(int status, String err, Exception e) {
-        super(err, e);
-        this.status = status;
-    }
 }

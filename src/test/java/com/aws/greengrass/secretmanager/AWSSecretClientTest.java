@@ -9,6 +9,7 @@ import com.aws.greengrass.secretmanager.exception.SecretManagerException;
 import com.aws.greengrass.testcommons.testutilities.GGExtension;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
+import org.junit.jupiter.api.extension.ExtensionContext;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import software.amazon.awssdk.services.secretsmanager.SecretsManagerClient;
@@ -25,6 +26,7 @@ import java.time.Instant;
 import java.util.Arrays;
 import java.util.UUID;
 
+import static com.aws.greengrass.testcommons.testutilities.ExceptionLogProtector.ignoreExceptionOfType;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.mockito.ArgumentMatchers.any;
@@ -62,7 +64,13 @@ class AWSSecretClientTest {
     }
 
     @Test
-    void GIVEN_aws_client_throws_WHEN_get_secret_THEN_valid_exception_returned() throws SecretManagerException {
+    void GIVEN_aws_client_throws_WHEN_get_secret_THEN_valid_exception_returned(ExtensionContext context) {
+        ignoreExceptionOfType(context, IOException.class);
+        ignoreExceptionOfType(context, InternalServiceErrorException.class);
+        ignoreExceptionOfType(context, DecryptionFailureException.class);
+        ignoreExceptionOfType(context, ResourceNotFoundException.class);
+        ignoreExceptionOfType(context, InvalidParameterException.class);
+        ignoreExceptionOfType(context, InvalidRequestException.class);
         when(mockAwsClient.getSecretValue(any(GetSecretValueRequest.class))).thenThrow(InternalServiceErrorException.class);
         AWSSecretClient cloud = new AWSSecretClient(mockAwsClient);
         GetSecretValueRequest request = GetSecretValueRequest.builder().secretId(SECRET_NAME).versionStage(LATEST_LABEL).build();
@@ -86,12 +94,13 @@ class AWSSecretClientTest {
             throw new IOException();
         }).thenAnswer(invocation -> {
             throw new IOException(); });
-        assertThrows(IOException.class, () -> cloud.getSecret(request));
+        assertThrows(SecretManagerException.class, () -> cloud.getSecret(request));
     }
 
     @Test
-    void GIVEN_aws_client_throws_WHEN_get_secret_THEN_retry_and_return() throws SecretManagerException,
+    void GIVEN_aws_client_throws_WHEN_get_secret_THEN_retry_and_return(ExtensionContext context) throws SecretManagerException,
             IOException {
+        ignoreExceptionOfType(context, IOException.class);
         GetSecretValueResponse mockResult = GetSecretValueResponse.builder()
                 .secretString(SECRET_VALUE)
                 .arn(ARN)
@@ -114,7 +123,8 @@ class AWSSecretClientTest {
     }
 
     @Test
-    void GIVEN_aws_client_throws_WHEN_get_invalid_secret_THEN_valid_exception_returned() throws SecretManagerException {
+    void GIVEN_aws_client_throws_WHEN_get_invalid_secret_THEN_valid_exception_returned(ExtensionContext context) {
+        ignoreExceptionOfType(context, IllegalArgumentException.class);
         AWSSecretClient cloud = new AWSSecretClient(mockAwsClient);
         // empty secret
         GetSecretValueRequest emptyRequest = GetSecretValueRequest.builder().versionStage(LATEST_LABEL).build();
@@ -126,7 +136,9 @@ class AWSSecretClientTest {
     }
 
     @Test
-    void GIVEN_aws_client_throws_WHEN_cloud_returns_invalid_secret_THEN_valid_exception_returned() throws SecretManagerException {
+    void GIVEN_aws_client_throws_WHEN_cloud_returns_invalid_secret_THEN_valid_exception_returned(ExtensionContext context) throws SecretManagerException {
+        ignoreExceptionOfType(context, IllegalArgumentException.class);
+
         AWSSecretClient cloud = new AWSSecretClient(mockAwsClient);
         // empty secret
         GetSecretValueRequest request = GetSecretValueRequest.builder().secretId(SECRET_NAME).versionStage(LATEST_LABEL).build();
