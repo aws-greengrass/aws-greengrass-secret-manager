@@ -9,12 +9,4 @@ public class NoSecretFoundException extends SecretManagerException {
     public NoSecretFoundException(String err) {
         super(err);
     }
-
-    public NoSecretFoundException(Exception err) {
-        super(err);
-    }
-
-    public NoSecretFoundException(String err, Exception e) {
-        super(err, e);
-    }
 }
