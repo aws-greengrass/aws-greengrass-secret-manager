@@ -14,7 +14,6 @@ import com.aws.greengrass.dependency.ImplementsService;
 import com.aws.greengrass.dependency.State;
 import com.aws.greengrass.lifecyclemanager.PluginService;
 import com.aws.greengrass.secretmanager.exception.NoSecretFoundException;
-import com.aws.greengrass.secretmanager.exception.SecretCryptoException;
 import com.aws.greengrass.secretmanager.exception.SecretManagerException;
 import com.aws.greengrass.secretmanager.exception.v1.GetSecretException;
 import com.aws.greengrass.secretmanager.model.v1.GetSecretValueError;
@@ -118,7 +117,8 @@ public class SecretManagerService extends PluginService {
 
     @Override
     public void startup() throws InterruptedException {
-        // Wait for the initial sync to complete before marking ourselves as running
+        // Wait for the initial sync to complete before marking ourselves as running.
+        // This will throw timeout exception as startup has default timeout of 2 minutes.
         Future<?> syncFut = syncFuture.get();
         if (syncFut != null) {
             try {
@@ -141,25 +141,11 @@ public class SecretManagerService extends PluginService {
             // Ignore. This means we started with empty configuration
             logger.atDebug().setEventType("secret-manager-startup").log("No secrets configured");
         } catch (SecretManagerException e) {
-            // No need to log anything here, it is already logged by reloadCache
-
-            // If there was a crypto issue then we probably need to re-encrypt the secrets, so we will wait for the sync
-            // future to complete without error since it would have started up already due to the subscribe() call
-            // above.
-            if (e.getCause() instanceof SecretCryptoException) {
-                syncFut = syncFuture.get();
-                if (syncFut != null) {
-                    try {
-                        syncFut.get();
-                    } catch (ExecutionException ex) {
-                        serviceErrored(ex.getCause());
-                        return;
-                    }
-                }
-            } else {
-                serviceErrored(e);
-                return;
-            }
+            logger.atWarn().setEventType("secret-manager-startup").log("Unable to reload secrets from cache "
+                    + "during startup");
+        } catch (Exception e) {
+            // Put the service in ERRORED state if something unexpected happens. This should never happen.
+            serviceErrored(e);
         }
         reportState(State.RUNNING);
     }

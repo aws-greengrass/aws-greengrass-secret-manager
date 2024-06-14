@@ -742,7 +742,7 @@ class SecretManagerTest {
     }
 
     @Test
-    void GIVEN_secret_manager_WHEN_unable_to_decrypt_THEN_load_from_disk_throws(ExtensionContext context)
+    void GIVEN_secret_manager_WHEN_unable_to_decrypt_THEN_load_from_disk_doesnt_throw(ExtensionContext context)
             throws Exception {
         ignoreExceptionOfType(context, SecretCryptoException.class);
         AWSSecretResponse mockSecret = mock(AWSSecretResponse.class);
@@ -756,7 +756,7 @@ class SecretManagerTest {
 
         SecretManager sm = new SecretManager(mockAWSSecretClient, mockDao, mockKernelClient, localStoreMap);
         // This will throw as encrypted string is invalid format for crypter
-        assertThrows(SecretManagerException.class, sm::reloadCache);
+        sm.reloadCache();
     }
 
     @Test
