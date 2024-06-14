@@ -111,11 +111,12 @@ public class SecretManagerServiceTest {
     }
 
     @Test
-    void GIVEN_secret_service_WHEN_load_secret_fails_THEN_service_errors(ExtensionContext context) throws Exception {
+    void GIVEN_secret_service_WHEN_load_secret_fails_THEN_service_still_running(ExtensionContext context)
+            throws Exception {
         ignoreExceptionOfType(context, SecretManagerException.class);
 
         doThrow(SecretManagerException.class).when(mockSecretManager).reloadCache();
-        startKernelWithConfig("config.yaml", State.ERRORED);
+        startKernelWithConfig("config.yaml", State.RUNNING);
     }
 
     @Test

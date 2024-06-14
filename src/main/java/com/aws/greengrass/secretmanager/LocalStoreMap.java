@@ -51,6 +51,7 @@ public class LocalStoreMap {
     private final SecurityService securityService;
 
     private final Lock lock = LockFactory.newReentrantLock(this);
+    private final Lock localStoreLock = LockFactory.newReentrantLock(this);
 
     @Inject
     LocalStoreMap(SecurityService securityService, FileSecretStore dao, DeviceConfiguration deviceConfiguration) {
@@ -113,22 +114,24 @@ public class LocalStoreMap {
     Cache should be updated whenever the store is updated.
      */
     private void save(List<SecretConfiguration> secretConfiguration) {
-        List<AWSSecretResponse> responses = new ArrayList<>();
-        if (!secrets.isEmpty()) {
-            secretConfiguration.forEach((secretConfig) -> {
-                secretConfig.getLabels().forEach((label) -> {
-                    String arn = secretConfig.getArn();
-                    if (secrets.containsKey(arn) && secrets.get(arn).responseMap.containsKey(label)) {
-                        responses.add(secrets.get(arn).responseMap.get(label));
-                    }
+        try (LockScope ls = LockScope.lock(localStoreLock)) {
+            List<AWSSecretResponse> responses = new ArrayList<>();
+            if (!secrets.isEmpty()) {
+                secretConfiguration.forEach((secretConfig) -> {
+                    secretConfig.getLabels().forEach((label) -> {
+                        String arn = secretConfig.getArn();
+                        if (secrets.containsKey(arn) && secrets.get(arn).responseMap.containsKey(label)) {
+                            responses.add(secrets.get(arn).responseMap.get(label));
+                        }
+                    });
                 });
-            });
-        }
+            }
 
-        try {
-            secretStore.saveAll(new SecretDocument(responses));
-        } catch (SecretManagerException e) {
-            logger.atError().log("Unable to update the local store.");
+            try {
+                secretStore.saveAll(new SecretDocument(responses));
+            } catch (SecretManagerException e) {
+                logger.atError().log("Unable to update the local store.");
+            }
         }
     }
 
@@ -171,23 +174,25 @@ public class LocalStoreMap {
     }
 
     private void updateWithSecret(AWSSecretResponse secretResponse, List<SecretConfiguration> secretConfiguration) {
-        reloadSecretsFromLocalStore();
-        String arn = secretResponse.getArn();
-        if (secrets.containsKey(arn)) {
-            Labels secLabelMap = secrets.get(arn);
-            secLabelMap.responseMap.entrySet()
-                    .removeIf(entry -> entry.getValue().getVersionId().equals(secretResponse.getVersionId()));
-            secLabelMap.responseMap.forEach((k, v) -> {
-                ArrayList<String> list = new ArrayList<>(v.getVersionStages());
-                list.removeAll(new ArrayList<>(secretResponse.getVersionStages()));
-                v.setVersionStages(list);
+        try (LockScope ls = LockScope.lock(localStoreLock)) {
+            reloadSecretsFromLocalStore();
+            String arn = secretResponse.getArn();
+            if (secrets.containsKey(arn)) {
+                Labels secLabelMap = secrets.get(arn);
+                secLabelMap.responseMap.entrySet()
+                        .removeIf(entry -> entry.getValue().getVersionId().equals(secretResponse.getVersionId()));
+                secLabelMap.responseMap.forEach((k, v) -> {
+                    ArrayList<String> list = new ArrayList<>(v.getVersionStages());
+                    list.removeAll(new ArrayList<>(secretResponse.getVersionStages()));
+                    v.setVersionStages(list);
+                });
+            }
+            secrets.putIfAbsent(arn, new Labels(new HashMap<>()));
+            secretResponse.getVersionStages().forEach((label) -> {
+                secrets.get(arn).responseMap.put(label, secretResponse);
             });
+            this.save(secretConfiguration);
         }
-        secrets.putIfAbsent(arn, new Labels(new HashMap<>()));
-        secretResponse.getVersionStages().forEach((label) -> {
-            secrets.get(arn).responseMap.put(label, secretResponse);
-        });
-        this.save(secretConfiguration);
     }
 
     private AWSSecretResponse encryptAWSResponse(GetSecretValueResponse result) throws SecretCryptoException {
@@ -268,28 +273,30 @@ public class LocalStoreMap {
      * }
      */
     private void reloadSecretsFromLocalStore() {
-        SecretDocument doc;
-        try {
-             doc = secretStore.getAll();
-        } catch (SecretManagerException e) {
-            logger.atWarn().log("Cannot read secrets from the local store");
-            return;
-        }
-        if (doc == null || doc.getSecrets() == null || doc.getSecrets().isEmpty()) {
-            return;
-        }
-        for (AWSSecretResponse secretResponse : doc.getSecrets()) {
+        try (LockScope ls = LockScope.lock(localStoreLock)) {
+            SecretDocument doc;
             try {
-                decrypt(secretResponse);
-            } catch (SecretCryptoException e) {
-                logger.atWarn().kv("secretArn", secretResponse.getArn()).kv("label", secretResponse.getVersionId())
-                        .log("Unable to decrypt the secret in local store.");
-                continue;
+                doc = secretStore.getAll();
+            } catch (SecretManagerException e) {
+                logger.atWarn().log("Cannot read secrets from the local store");
+                return;
             }
-            secrets.putIfAbsent(secretResponse.getArn(), new Labels(new HashMap<>()));
-            secretResponse.getVersionStages().forEach((label) -> {
-                secrets.get(secretResponse.getArn()).responseMap.put(label, secretResponse);
-            });
+            if (doc == null || doc.getSecrets() == null || doc.getSecrets().isEmpty()) {
+                return;
+            }
+            for (AWSSecretResponse secretResponse : doc.getSecrets()) {
+                try {
+                    decrypt(secretResponse);
+                } catch (SecretCryptoException e) {
+                    logger.atWarn().kv("secretArn", secretResponse.getArn()).kv("label", secretResponse.getVersionId())
+                            .log("Unable to decrypt the secret in local store.");
+                    continue;
+                }
+                secrets.putIfAbsent(secretResponse.getArn(), new Labels(new HashMap<>()));
+                secretResponse.getVersionStages().forEach((label) -> {
+                    secrets.get(secretResponse.getArn()).responseMap.put(label, secretResponse);
+                });
+            }
         }
     }
 

@@ -18,6 +18,8 @@ import com.aws.greengrass.secretmanager.model.SecretDocument;
 import com.aws.greengrass.secretmanager.store.FileSecretStore;
 import com.aws.greengrass.secretmanager.store.SecretStore;
 import com.aws.greengrass.util.Coerce;
+import com.aws.greengrass.util.LockFactory;
+import com.aws.greengrass.util.LockScope;
 import com.aws.greengrass.util.Utils;
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.MapperFeature;
@@ -26,7 +28,6 @@ import software.amazon.awssdk.aws.greengrass.model.SecretValue;
 import software.amazon.awssdk.services.secretsmanager.model.GetSecretValueRequest;
 import software.amazon.awssdk.services.secretsmanager.model.GetSecretValueResponse;
 
-import java.io.IOException;
 import java.nio.ByteBuffer;
 import java.util.ArrayList;
 import java.util.Collections;
@@ -34,6 +35,7 @@ import java.util.Date;
 import java.util.List;
 import java.util.Objects;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.locks.Lock;
 import java.util.regex.Pattern;
 import javax.inject.Inject;
 
@@ -63,6 +65,7 @@ public class SecretManager {
     private final KernelClient kernelClient;
     private static final ObjectMapper OBJECT_MAPPER =
             new ObjectMapper().configure(MapperFeature.ACCEPT_CASE_INSENSITIVE_PROPERTIES, true);
+    private final Lock cacheLock = LockFactory.newReentrantLock(this);
 
     /**
      * Constructor.
@@ -133,15 +136,17 @@ public class SecretManager {
      * @throws SecretManagerException when there are issues reading from disk
      */
     public void reloadCache() throws SecretManagerException {
-        logger.atDebug("load-secret-local-store").log();
-        // read the db
-        List<AWSSecretResponse> secrets = secretStore.getAll().getSecrets();
-        nameToArnMap.clear();
-        cache.clear();
-        if (!Utils.isEmpty(secrets)) {
-            for (AWSSecretResponse secretResult : secrets) {
-                nameToArnMap.put(secretResult.getName(), secretResult.getArn());
-                loadCache(secretResult);
+        try (LockScope ls = LockScope.lock(cacheLock)) {
+            logger.atDebug("load-secret-local-store").log();
+            // read the db
+            List<AWSSecretResponse> secrets = secretStore.getAll().getSecrets();
+            nameToArnMap.clear();
+            cache.clear();
+            if (!Utils.isEmpty(secrets)) {
+                for (AWSSecretResponse secretResult : secrets) {
+                    nameToArnMap.put(secretResult.getName(), secretResult.getArn());
+                    loadCache(secretResult);
+                }
             }
         }
     }
@@ -154,23 +159,24 @@ public class SecretManager {
     * arn1:l1 -> secret3
     * arn1:l2 -> secret4
     */
-    private void loadCache(AWSSecretResponse awsSecretResponse)
-            throws SecretManagerException {
-        GetSecretValueResponse decryptedResponse = null;
-        try {
-            decryptedResponse = localStoreMap.decrypt(awsSecretResponse);
-        } catch (SecretCryptoException e) {
-            // This should never happen ideally
-            logger.atError().kv("secret",
-                    awsSecretResponse.getArn()).cause(e).log("Unable to decrypt secret, skip loading in cache");
-            throw new SecretManagerException("Cannot load secret from disk", e);
-        }
-        String secretArn = decryptedResponse.arn();
-        cache.put(secretArn, decryptedResponse);
-        cache.put(secretArn + decryptedResponse.versionId(), decryptedResponse);
-        // load all labels attached with this version of secret
-        for (String label : decryptedResponse.versionStages()) {
-            cache.put(secretArn + label, decryptedResponse);
+    private void loadCache(AWSSecretResponse awsSecretResponse) {
+        try (LockScope ls = LockScope.lock(cacheLock)) {
+            GetSecretValueResponse decryptedResponse = null;
+            try {
+                decryptedResponse = localStoreMap.decrypt(awsSecretResponse);
+            } catch (SecretCryptoException e) {
+                // This should never happen ideally
+                logger.atError().kv("secret", awsSecretResponse.getArn()).cause(e).log("Unable to decrypt secret, "
+                        + "skip loading in cache");
+                return;
+            }
+            String secretArn = decryptedResponse.arn();
+            cache.put(secretArn, decryptedResponse);
+            cache.put(secretArn + decryptedResponse.versionId(), decryptedResponse);
+            // load all labels attached with this version of secret
+            for (String label : decryptedResponse.versionStages()) {
+                cache.put(secretArn + label, decryptedResponse);
+            }
         }
     }
 
