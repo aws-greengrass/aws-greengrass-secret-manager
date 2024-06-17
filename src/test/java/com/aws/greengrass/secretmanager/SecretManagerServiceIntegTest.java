@@ -39,6 +39,7 @@ import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.time.Instant;
 import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.TimeUnit;
 
 import static com.aws.greengrass.deployment.DeviceConfiguration.DEVICE_PARAM_PRIVATE_KEY_PATH;
@@ -51,9 +52,14 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyLong;
+import static org.mockito.Mockito.atLeast;
 import static org.mockito.Mockito.lenient;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.reset;
 import static org.mockito.Mockito.spy;
+import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.when;
 
 @ExtendWith({MockitoExtension.class, GGExtension.class})
 public class SecretManagerServiceIntegTest extends BaseITCase {
@@ -211,6 +217,34 @@ public class SecretManagerServiceIntegTest extends BaseITCase {
         assertEquals(VERSION_ID, response.getVersionId());
         assertTrue(response.getVersionStage().contains(CURRENT_LABEL));
         assertEquals("secretValue", response.getSecretValue().getSecretString());
+    }
+
+    @Test
+    void GIVEN_secret_service_WHEN_periodic_refresh_THEN_secret_updated() throws Exception {
+        startKernelWithConfig("config_refresh.yaml", State.RUNNING);
+        String arn = "arn:aws:secretsmanager:us-east-1:999936977227:secret:randomSecret-74lYJh";
+        // This will be invoked during periodic refresh.
+        lenient().doReturn(software.amazon.awssdk.services.secretsmanager.model.GetSecretValueResponse.builder()
+                        .name("randomSecret").arn(arn).secretString("updatedSecretValue").versionId("updatedVersionId")
+                        .versionStages( CURRENT_LABEL).createdDate(Instant.now().minusSeconds(1000000)).build())
+                .when(secretClient).getSecret(GetSecretValueRequest.builder().secretId(arn).versionStage(CURRENT_LABEL).build());
+
+        software.amazon.awssdk.aws.greengrass.model.GetSecretValueRequest secretExists =
+                new software.amazon.awssdk.aws.greengrass.model.GetSecretValueRequest();
+        secretExists.setSecretId("randomSecret");
+        secretExists.setVersionStage(CURRENT_LABEL);
+
+        GreengrassCoreIPCClientV2 clientV2 = IPCTestUtils.connectV2Client(kernel, "ComponentRequestingSecrets");
+        GetSecretValueResponse response= clientV2.getSecretValue(secretExists);
+        assertEquals(arn, response.getSecretId());
+        assertEquals(VERSION_ID, response.getVersionId());
+        assertTrue(response.getVersionStage().contains(CURRENT_LABEL));
+        assertEquals("secretValue", response.getSecretValue().getSecretString());
+        Thread.sleep(5000); // periodic refresh happens every 3 seconds as per the config.
+        GetSecretValueResponse responsse= clientV2.getSecretValue(secretExists);
+        assertEquals(arn, responsse.getSecretId());
+        assertEquals("updatedVersionId", responsse.getVersionId());
+        assertTrue(responsse.getVersionStage().contains(CURRENT_LABEL));
     }
 
     @Test

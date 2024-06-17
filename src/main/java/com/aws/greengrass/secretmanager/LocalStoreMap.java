@@ -24,6 +24,7 @@ import com.aws.greengrass.util.RetryUtils;
 import com.aws.greengrass.util.Utils;
 import software.amazon.awssdk.core.SdkBytes;
 import software.amazon.awssdk.services.secretsmanager.model.GetSecretValueResponse;
+import vendored.com.google.common.util.concurrent.CycleDetectingLockFactory;
 
 import java.net.URI;
 import java.nio.charset.StandardCharsets;
@@ -35,23 +36,25 @@ import java.util.Base64;
 import java.util.Collections;
 import java.util.HashMap;
 import java.util.List;
-import java.util.concurrent.ConcurrentHashMap;
+import java.util.Map;
 import java.util.concurrent.atomic.AtomicReference;
 import java.util.concurrent.locks.Lock;
 import javax.inject.Inject;
 
 import static com.aws.greengrass.deployment.DeviceConfiguration.DEVICE_PARAM_CERTIFICATE_FILE_PATH;
 import static com.aws.greengrass.deployment.DeviceConfiguration.DEVICE_PARAM_PRIVATE_KEY_PATH;
+import static vendored.com.google.common.util.concurrent.CycleDetectingLockFactory.Policies.THROW;
 
 public class LocalStoreMap {
     private final Logger logger = LogManager.getLogger(LocalStoreMap.class);
-    private final ConcurrentHashMap<String, Labels> secrets;
+    private final Map<String, Labels> secrets;
     private final SecretStore<SecretDocument, AWSSecretResponse> secretStore;
     private final AtomicReference<Crypter> crypter = new AtomicReference<>();
     private final SecurityService securityService;
 
     private final Lock lock = LockFactory.newReentrantLock(this);
-    private final Lock localStoreLock = LockFactory.newReentrantLock(this);
+    private final Lock localStoreLock = CycleDetectingLockFactory.newInstance(THROW).newReentrantLock(
+            "lockStoreLock");
 
     @Inject
     LocalStoreMap(SecurityService securityService, FileSecretStore dao, DeviceConfiguration deviceConfiguration) {
@@ -66,7 +69,7 @@ public class LocalStoreMap {
                 }
             }
         }));
-        this.secrets = new ConcurrentHashMap<>();
+        this.secrets = new HashMap<>();
     }
 
     private boolean validUpdate(Node node, String key) {
