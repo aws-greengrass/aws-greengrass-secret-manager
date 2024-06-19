@@ -8,9 +8,7 @@ package com.aws.greengrass.secretmanager;
 import com.aws.greengrass.authorization.AuthorizationHandler;
 import com.aws.greengrass.authorization.Permission;
 import com.aws.greengrass.authorization.exceptions.AuthorizationException;
-import com.aws.greengrass.config.Topics;
 import com.aws.greengrass.dependency.State;
-import com.aws.greengrass.deployment.DeviceConfiguration;
 import com.aws.greengrass.lifecyclemanager.GreengrassService;
 import com.aws.greengrass.lifecyclemanager.Kernel;
 import com.aws.greengrass.secretmanager.exception.SecretCryptoException;
@@ -38,8 +36,6 @@ import java.util.HashSet;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
 
-import static com.aws.greengrass.deployment.DeviceConfiguration.DEVICE_PARAM_PRIVATE_KEY_PATH;
-import static com.aws.greengrass.deployment.DeviceConfiguration.SYSTEM_NAMESPACE_KEY;
 import static com.aws.greengrass.secretmanager.TestUtil.ignoreErrors;
 import static com.aws.greengrass.testcommons.testutilities.ExceptionLogProtector.ignoreExceptionOfType;
 import static org.hamcrest.MatcherAssert.assertThat;
@@ -49,9 +45,9 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.atLeastOnce;
+import static org.mockito.Mockito.doAnswer;
 import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.reset;
-import static org.mockito.Mockito.spy;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 import static software.amazon.awssdk.aws.greengrass.GreengrassCoreIPCServiceModel.GET_SECRET_VALUE;
@@ -83,10 +79,19 @@ public class SecretManagerServiceTest {
 
     void startKernelWithConfig(String configFile, State expectedState) throws InterruptedException {
         CountDownLatch secretManagerRunning = new CountDownLatch(1);
+        CountDownLatch cdl = new CountDownLatch(1);
+        doAnswer((i)->{
+            cdl.countDown();
+            return null;
+        }).when(mockSecretManager).syncFromCloud();
         kernel = new Kernel();
         kernel.parseArgs("-r", rootDir.toAbsolutePath().toString(), "-i",
                 getClass().getResource(configFile).toString());
         kernel.getContext().addGlobalStateChangeListener((GreengrassService service, State was, State newState) -> {
+            if (service.getName().equals(SecretManagerService.SECRET_MANAGER_SERVICE_NAME) && service.getState()
+                    .equals(State.INSTALLED)) {
+                kernel.getContext().get(SecretManagerService.class).setIsInitialSyncComplete(cdl);
+            }
             if (service.getName().equals(SecretManagerService.SECRET_MANAGER_SERVICE_NAME) && service.getState()
                     .equals(expectedState)) {
                 secretManagerRunning.countDown();

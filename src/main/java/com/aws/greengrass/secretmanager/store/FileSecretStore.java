@@ -53,7 +53,7 @@ public class FileSecretStore implements SecretStore<SecretDocument, AWSSecretRes
      * @return {@link SecretDocument} containing all persisted secrets
      * @throws SecretManagerException when there is any issue reading the store.
      */
-    public synchronized SecretDocument getAll() throws SecretManagerException {
+    public SecretDocument getAll() throws SecretManagerException {
         Topic secretResponseTopic = kernelClient.getConfig().lookup(SERVICES_NAMESPACE_TOPIC,
                     SecretManagerService.SECRET_MANAGER_SERVICE_NAME, RUNTIME_STORE_NAMESPACE_TOPIC,
                 SECRET_RESPONSE_TOPIC);
@@ -74,7 +74,7 @@ public class FileSecretStore implements SecretStore<SecretDocument, AWSSecretRes
      * @return {@link AWSSecretResponse} the secret given the arn and label, null if not present
      * @throws SecretManagerException when there is any issue reading the store.
      */
-    public synchronized AWSSecretResponse get(String secretArn, String label) throws SecretManagerException {
+    public AWSSecretResponse get(String secretArn, String label) throws SecretManagerException {
         if (Utils.isEmpty(secretArn) || Utils.isEmpty(label)) {
             throw new SecretManagerException("Cannot get secret response from store given empty arn or label");
         }
@@ -123,7 +123,7 @@ public class FileSecretStore implements SecretStore<SecretDocument, AWSSecretRes
      * @param doc {@link SecretDocument} containing list of secrets to persist
      * @throws SecretManagerException when there is any issue writing to the store.
      */
-    public synchronized void saveAll(SecretDocument doc) throws SecretManagerException {
+    public void saveAll(SecretDocument doc) throws SecretManagerException {
         Topic secretTopic = kernelClient.getConfig().lookup(SERVICES_NAMESPACE_TOPIC,
                 SecretManagerService.SECRET_MANAGER_SERVICE_NAME, RUNTIME_STORE_NAMESPACE_TOPIC,
                 SECRET_RESPONSE_TOPIC);

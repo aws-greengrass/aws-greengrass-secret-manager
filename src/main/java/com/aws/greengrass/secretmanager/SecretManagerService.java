@@ -18,85 +18,120 @@ import com.aws.greengrass.secretmanager.exception.SecretManagerException;
 import com.aws.greengrass.secretmanager.exception.v1.GetSecretException;
 import com.aws.greengrass.secretmanager.model.v1.GetSecretValueError;
 import com.aws.greengrass.secretmanager.model.v1.GetSecretValueResult;
+import com.aws.greengrass.util.Coerce;
+import com.aws.greengrass.util.LockScope;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.MapperFeature;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import lombok.Setter;
 import software.amazon.awssdk.aws.greengrass.GreengrassCoreIPCService;
+import vendored.com.google.common.util.concurrent.CycleDetectingLockFactory;
 
 import java.io.IOException;
 import java.util.Collections;
 import java.util.HashSet;
-import java.util.concurrent.ExecutionException;
+import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.ExecutorService;
-import java.util.concurrent.Future;
-import java.util.concurrent.atomic.AtomicReference;
+import java.util.concurrent.ScheduledExecutorService;
+import java.util.concurrent.ScheduledFuture;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.locks.Lock;
 import javax.inject.Inject;
 
 import static com.aws.greengrass.componentmanager.KernelConfigResolver.CONFIGURATION_CONFIG_KEY;
 import static software.amazon.awssdk.aws.greengrass.GreengrassCoreIPCService.GET_SECRET_VALUE;
+import static vendored.com.google.common.util.concurrent.CycleDetectingLockFactory.Policies.THROW;
 
 @ImplementsService(name = SecretManagerService.SECRET_MANAGER_SERVICE_NAME)
 public class SecretManagerService extends PluginService {
     public static final String SECRET_MANAGER_SERVICE_NAME = "aws.greengrass.SecretManager";
     public static final String SECRETS_TOPIC = "cloudSecrets";
+    public static final String PERIODIC_REFRESH_INTERVAL_MIN = "periodicRefreshIntervalMin";
+
     private static final ObjectMapper OBJECT_MAPPER =
             new ObjectMapper().configure(MapperFeature.ACCEPT_CASE_INSENSITIVE_PROPERTIES, true);
 
     private final SecretManager secretManager;
     private final AuthorizationHandler authorizationHandler;
     private final ExecutorService executor;
-    private final AtomicReference<Future<?>> syncFuture = new AtomicReference<Future<?>>(null);
+    private ScheduledFuture<?> scheduledSyncFuture = null;
+    private final Lock scheduleSyncFutureLock =
+            CycleDetectingLockFactory.newInstance(THROW).newReentrantLock("scheduleSyncFutureLock");
+    private final ScheduledExecutorService ses;
     private final ChildChanged handleConfigurationChangeLambda = (whatHappened, node) -> {
         if (whatHappened == WhatHappened.timestampUpdated || whatHappened == WhatHappened.interiorAdded) {
             return;
         }
-        if (whatHappened == WhatHappened.initialized || SECRETS_TOPIC.equals(node.getName())) {
+        if (whatHappened == WhatHappened.initialized || SECRETS_TOPIC.equals(node.getName())
+                || PERIODIC_REFRESH_INTERVAL_MIN.equals(node.getName())) {
             serviceChanged();
         }
     };
-
     @Inject
     SecretManagerIPCAgent secretManagerIPCAgent;
-
     @Inject
     private GreengrassCoreIPCService greengrassCoreIPCService;
+    // for testing
+    @Setter
+    private CountDownLatch isInitialSyncComplete = new CountDownLatch(1);
 
     /**
      * Constructor for SecretManagerService Service.
-     * @param topics                root Configuration topic for this service
-     * @param secretManager         secret manager which manages secrets
-     * @param authorizationHandler  authorization handler
-     * @param executorService       executor service
+     *
+     * @param topics               root Configuration topic for this service
+     * @param secretManager        secret manager which manages secrets
+     * @param authorizationHandler authorization handler
+     * @param executorService executor service
+     * @param ses scheduled executor service
      */
     @Inject
-    public SecretManagerService(Topics topics,
-                                SecretManager secretManager,
-                                AuthorizationHandler authorizationHandler,
-                                ExecutorService executorService) {
+    public SecretManagerService(Topics topics, SecretManager secretManager, AuthorizationHandler authorizationHandler,
+                                ExecutorService executorService, ScheduledExecutorService ses) {
         super(topics);
         this.secretManager = secretManager;
         this.authorizationHandler = authorizationHandler;
         this.executor = executorService;
+        this.ses = ses;
     }
 
     @Override
     protected void install() throws InterruptedException {
         super.install();
+        // Re-initialize the sync counter every time the component is installed
+        setIsInitialSyncComplete(new CountDownLatch(1));
         // subscribe will invoke serviceChanged right away to sync from cloud
         this.config.lookupTopics(CONFIGURATION_CONFIG_KEY).subscribe(this.handleConfigurationChangeLambda);
     }
 
     private void serviceChanged() {
-        replaceSyncFuture(secretManager::syncFromCloud);
-    }
-
-    private synchronized Future<?> replaceSyncFuture(Runnable r) {
-        Future<?> newFut = r == null ? null : executor.submit(r);
-        Future<?> oldFut = syncFuture.getAndSet(newFut);
-        if (oldFut != null) {
-            oldFut.cancel(true);
+        try (LockScope ls = LockScope.lock(scheduleSyncFutureLock)) {
+            if (scheduledSyncFuture != null) {
+                scheduledSyncFuture.cancel(false);
+                scheduledSyncFuture = null;
+            }
+            long refreshIntervalSeconds = (long) (Coerce.toDouble(
+                    this.config.lookupTopics(CONFIGURATION_CONFIG_KEY).findOrDefault(0, PERIODIC_REFRESH_INTERVAL_MIN))
+                    * 60);
+            Runnable syncSecrets = () -> {
+                secretManager.syncFromCloud();
+                isInitialSyncComplete.countDown();
+            };
+            if (refreshIntervalSeconds <= 0) {
+                // Refresh secrets only once and return
+                syncSecrets.run();
+            } else {
+                // Schedule syncing secrets at configured intervals
+                scheduledSyncFuture = ses.scheduleAtFixedRate(() -> {
+                    try {
+                        syncSecrets.run();
+                    } catch (Exception ex) {
+                        // Scheduler future will not run scheduled tasks if one of them is completed with an exception.
+                        // This is to ensure that unknown exceptions are also caught so the scheduler keeps on running
+                        logger.atError().cause(ex).log("Unable to sync configured secrets from cloud");
+                    }
+                }, 0, refreshIntervalSeconds, TimeUnit.SECONDS);
+            }
         }
-        return newFut;
     }
 
     @Override
@@ -119,16 +154,7 @@ public class SecretManagerService extends PluginService {
     public void startup() throws InterruptedException {
         // Wait for the initial sync to complete before marking ourselves as running.
         // This will throw timeout exception as startup has default timeout of 2 minutes.
-        Future<?> syncFut = syncFuture.get();
-        if (syncFut != null) {
-            try {
-                syncFut.get();
-            } catch (ExecutionException ex) {
-                serviceErrored(ex.getCause());
-                return;
-            }
-        }
-
+        isInitialSyncComplete.await();
         // GG_NEEDS_REVIEW: TODO: Modify secret service to only provide interface to deal with downloaded
         // secrets during download phase.
 
