@@ -1,0 +1,34 @@
+---
+services:
+  main:
+    lifecycle:
+      install: echo "main"
+    dependencies:
+      - aws.greengrass.SecretManager
+      - ComponentRequestingSecrets
+      - ComponentWithNoAccessPolicy
+
+  aws.greengrass.SecretManager:
+    configuration:
+      cloudSecrets:
+        - arn: "arn:aws:secretsmanager:us-east-1:999936977227:secret:randomSecret-74lYJh"
+          labels:
+            - "new"
+      periodicRefreshIntervalMin: 0.05
+
+  ComponentRequestingSecrets:
+    dependencies:
+      - aws.greengrass.SecretManager
+    configuration:
+      accessControl:
+        aws.greengrass.SecretManager:
+          policyId1:secretPolicy:
+            policyDescription: access to pubsub topics for ServiceName
+            operations:
+              - 'aws.greengrass#GetSecretValue'
+            resources:
+              - '*'
+
+  ComponentWithNoAccessPolicy:
+    dependencies:
+      - aws.greengrass.SecretManager

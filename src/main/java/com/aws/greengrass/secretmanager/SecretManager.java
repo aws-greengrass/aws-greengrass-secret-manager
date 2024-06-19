@@ -18,7 +18,6 @@ import com.aws.greengrass.secretmanager.model.SecretDocument;
 import com.aws.greengrass.secretmanager.store.FileSecretStore;
 import com.aws.greengrass.secretmanager.store.SecretStore;
 import com.aws.greengrass.util.Coerce;
-import com.aws.greengrass.util.LockFactory;
 import com.aws.greengrass.util.LockScope;
 import com.aws.greengrass.util.Utils;
 import com.fasterxml.jackson.core.type.TypeReference;
@@ -27,20 +26,24 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import software.amazon.awssdk.aws.greengrass.model.SecretValue;
 import software.amazon.awssdk.services.secretsmanager.model.GetSecretValueRequest;
 import software.amazon.awssdk.services.secretsmanager.model.GetSecretValueResponse;
+import vendored.com.google.common.util.concurrent.CycleDetectingLockFactory;
 
 import java.nio.ByteBuffer;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.Date;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.Objects;
-import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.locks.Lock;
 import java.util.regex.Pattern;
 import javax.inject.Inject;
 
 import static com.aws.greengrass.componentmanager.KernelConfigResolver.CONFIGURATION_CONFIG_KEY;
 import static com.aws.greengrass.secretmanager.SecretManagerService.SECRETS_TOPIC;
+import static vendored.com.google.common.util.concurrent.CycleDetectingLockFactory.Policies.THROW;
 
 /**
  * Class which holds the business logic for secret management. This class always holds a copy of actual AWS secrets
@@ -56,8 +59,8 @@ public class SecretManager {
     private static final String secretNotFoundErr = "Secret not found ";
     private final Logger logger = LogManager.getLogger(SecretManager.class);
     // Cache which holds aws secrets result
-    private final ConcurrentHashMap<String, GetSecretValueResponse> cache = new ConcurrentHashMap<>();
-    private final ConcurrentHashMap<String, String> nameToArnMap = new ConcurrentHashMap<>();
+    private final Map<String, GetSecretValueResponse> cache = new HashMap<>();
+    private final Map<String, String> nameToArnMap = new HashMap<>();
 
     private final AWSSecretClient secretClient;
     private final SecretStore<SecretDocument, AWSSecretResponse> secretStore;
@@ -65,7 +68,12 @@ public class SecretManager {
     private final KernelClient kernelClient;
     private static final ObjectMapper OBJECT_MAPPER =
             new ObjectMapper().configure(MapperFeature.ACCEPT_CASE_INSENSITIVE_PROPERTIES, true);
-    private final Lock cacheLock = LockFactory.newReentrantLock(this);
+    private final Lock cacheLock = CycleDetectingLockFactory.newInstance(THROW).newReentrantLock(
+            "cacheLock");
+
+    private final Lock syncFromCloudLock = CycleDetectingLockFactory.newInstance(THROW).newReentrantLock(
+            "syncFromCloudLock");
+
 
     /**
      * Constructor.
@@ -112,26 +120,31 @@ public class SecretManager {
      * When the component is installed, it firsts cleans up/syncs the existing local secrets as per the component
      * configuration. It then tries to download latest secret from cloud for each configured secret-label. It then
      * updates the local store with that secret and refreshes the cache.
+     *
      */
     public void syncFromCloud() {
-        // Contains secrets that are successfully decrypted from the local store.
-        List<SecretConfiguration> secretConfiguration = getSecretConfiguration();
-        localStoreMap.syncWithConfig(secretConfiguration);
-        for (SecretConfiguration configuredSecret : secretConfiguration) {
-            String arn = configuredSecret.getArn();
-            if (!Pattern.matches(VALID_SECRET_ARN_PATTERN, arn)) {
-                logger.atWarn().kv("Secret ", arn).log("Skipping invalid secret arn configured");
-                continue;
+        try (LockScope ls = LockScope.lock(syncFromCloudLock)) {
+            List<SecretConfiguration> secretConfiguration = getSecretConfiguration();
+            localStoreMap.syncWithConfig(secretConfiguration);
+            for (SecretConfiguration configuredSecret : secretConfiguration) {
+                String arn = configuredSecret.getArn();
+                if (!Pattern.matches(VALID_SECRET_ARN_PATTERN, arn)) {
+                    logger.atWarn().kv("Secret ", arn).log("Skipping invalid secret arn configured");
+                    continue;
+                }
+                configuredSecret.getLabels().forEach((label) -> {
+                    // Download latest secret from cloud for each configured label
+                    refreshSecretFromCloud(arn, label);
+                });
             }
-            configuredSecret.getLabels().forEach((label) -> {
-                // Download latest secret from cloud for each configured label
-                refreshSecretFromCloud(arn, label);
-            });
         }
     }
 
     /**
-     * load the secrets from a local store. This is used across restarts to load secrets from store.
+     * load the secrets from a local store. This is used across restarts to load secrets from store. This method can be
+     * called from several threads 1. Service thread during start up 2. IPC thread when refresh is set to true. 3.
+     * Secret manager config subscription thread - syncFromCloud 4. scheduler thread that periodically refreshes secrets
+     * - syncFromCloud
      *
      * @throws SecretManagerException when there are issues reading from disk
      */
