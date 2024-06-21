@@ -47,6 +47,8 @@ public class SecretManagerService extends PluginService {
     public static final String SECRET_MANAGER_SERVICE_NAME = "aws.greengrass.SecretManager";
     public static final String SECRETS_TOPIC = "cloudSecrets";
     public static final String PERIODIC_REFRESH_INTERVAL_MIN = "periodicRefreshIntervalMin";
+    public static final String PERFORMANCE_TOPIC = "performance";
+    public static final String CLOUD_REQUEST_QUEUE_SIZE_TOPIC = "cloudRequestQueueSize";
 
     private static final ObjectMapper OBJECT_MAPPER =
             new ObjectMapper().configure(MapperFeature.ACCEPT_CASE_INSENSITIVE_PROPERTIES, true);
@@ -65,6 +67,10 @@ public class SecretManagerService extends PluginService {
         if (whatHappened == WhatHappened.initialized || SECRETS_TOPIC.equals(node.getName())
                 || PERIODIC_REFRESH_INTERVAL_MIN.equals(node.getName())) {
             serviceChanged();
+        }
+
+        if (node != null && CLOUD_REQUEST_QUEUE_SIZE_TOPIC.equals(node.getName())) {
+            requestReinstall();
         }
     };
     @Inject
@@ -101,6 +107,8 @@ public class SecretManagerService extends PluginService {
         setIsInitialSyncComplete(new CountDownLatch(1));
         // subscribe will invoke serviceChanged right away to sync from cloud
         this.config.lookupTopics(CONFIGURATION_CONFIG_KEY).subscribe(this.handleConfigurationChangeLambda);
+        // Re-initialize the cloud thread pool for ipc async request processing
+        secretManagerIPCAgent.setCloudCallThreadPool(config);
     }
 
     private void serviceChanged() {
