@@ -200,17 +200,21 @@ public class SecretManager {
                 (secret) -> secret.getArn().equalsIgnoreCase(arn) && secret.getLabels().contains(versionStage));
         // If the requested secret is not  configured, then do not download.
         if (!Utils.isEmpty(versionStage) && !isSecretLabelConfigured) {
-            logger.atWarn().log("Not downloading the secret from cloud it is not configured.");
+            logger.atWarn().kv("secret", arn).kv("versionStage", versionStage).log("Not downloading the secret from "
+                    + "cloud as it is not configured.");
             return;
         }
         GetSecretValueRequest request =
                 GetSecretValueRequest.builder().secretId(arn).versionStage(versionLabel).build();
         try {
-            localStoreMap.updateWithSecret(secretClient.getSecret(request), getSecretConfiguration());
+            GetSecretValueResponse response = secretClient.getSecret(request);
+            logger.atDebug().kv("secret", arn).kv("versionStage", versionStage).log("Downloaded secret from cloud");
+            localStoreMap.updateWithSecret(response, getSecretConfiguration());
             // Reload cache with every secret update
             reloadCache();
         } catch (SecretCryptoException | SecretManagerException  e) {
-            logger.atError().cause(e).log("Unable to refresh secret from cloud. Local store will not be updated");
+            logger.atError().kv("secret", arn).kv("versionStage", versionStage).cause(e)
+                    .log("Unable to refresh secret from cloud. Local store will not be updated");
         }
     }
 
