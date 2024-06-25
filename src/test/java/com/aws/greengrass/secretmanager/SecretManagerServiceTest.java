@@ -80,7 +80,7 @@ public class SecretManagerServiceTest {
     void startKernelWithConfig(String configFile, State expectedState) throws InterruptedException {
         CountDownLatch secretManagerRunning = new CountDownLatch(1);
         CountDownLatch cdl = new CountDownLatch(1);
-        doAnswer((i)->{
+        doAnswer((i) -> {
             cdl.countDown();
             return null;
         }).when(mockSecretManager).syncFromCloud();
@@ -125,7 +125,8 @@ public class SecretManagerServiceTest {
     }
 
     @Test
-    void GIVEN_secret_service_WHEN_load_secret_fails_with_crypto_error_THEN_service_reloads_secrets(ExtensionContext context) throws Exception {
+    void GIVEN_secret_service_WHEN_load_secret_fails_with_crypto_error_THEN_service_reloads_secrets(
+            ExtensionContext context) throws Exception {
         ignoreExceptionOfType(context, SecretManagerException.class);
 
         SecretManagerException ex = new SecretManagerException(new SecretCryptoException("Bad"));
@@ -151,11 +152,12 @@ public class SecretManagerServiceTest {
                         .versionStages(Arrays.asList(new String[]{CURRENT_LABEL, VERSION_LABEL}))
                         .createdDate(currentTime).build();
 
-        when(mockSecretManager.getSecret(any(com.aws.greengrass.secretmanager.model.v1.GetSecretValueRequest.class)))
-                .thenReturn(expectedResponse);
+        when(mockSecretManager.getSecret(
+                any(com.aws.greengrass.secretmanager.model.v1.GetSecretValueRequest.class))).thenReturn(
+                expectedResponse);
         when(mockSecretManager.validateSecretId(SECRET_ID)).thenReturn(SECRET_ID);
-        when(mockAuthorizationHandler.isAuthorized(stringCaptor.capture(), permissionCaptor.capture()))
-                .thenReturn(true);
+        when(mockAuthorizationHandler.isAuthorized(stringCaptor.capture(), permissionCaptor.capture())).thenReturn(
+                true);
 
         String requestString = String.format("{\"SecretId\": \"%s\", \"VersionId\": \"%s\"}", SECRET_ID, VERSION_ID);
         byte[] getSecretResponse =
@@ -175,9 +177,8 @@ public class SecretManagerServiceTest {
         assertEquals(GET_SECRET_VALUE, permissionCaptor.getValue().getOperation());
         assertEquals(serviceName, permissionCaptor.getValue().getPrincipal());
         assertEquals(SECRET_ID, permissionCaptor.getValue().getResource());
-        verify(mockAuthorizationHandler, atLeastOnce())
-                .registerComponent(SecretManagerService.SECRET_MANAGER_SERVICE_NAME,
-                        new HashSet<>(Arrays.asList(GET_SECRET_VALUE)));
+        verify(mockAuthorizationHandler, atLeastOnce()).registerComponent(
+                SecretManagerService.SECRET_MANAGER_SERVICE_NAME, new HashSet<>(Arrays.asList(GET_SECRET_VALUE)));
 
         // Now request with secret name that maps to the arn
         when(mockSecretManager.validateSecretId(SECRET_NAME)).thenReturn(SECRET_ID);
@@ -196,6 +197,7 @@ public class SecretManagerServiceTest {
             throws IOException {
         return OBJECT_MAPPER.readValue(bytes, com.aws.greengrass.secretmanager.model.v1.GetSecretValueError.class);
     }
+
     @Test
     void GIVEN_secret_service_WHEN_v1_get_called_and_errors_THEN_correct_response_returned(ExtensionContext context)
             throws Exception {
@@ -203,16 +205,17 @@ public class SecretManagerServiceTest {
         startKernelWithConfig("config.yaml", State.RUNNING);
         final String serviceName = "mockService";
 
-        when(mockSecretManager.getSecret(any(com.aws.greengrass.secretmanager.model.v1.GetSecretValueRequest.class)))
-                .thenThrow(new GetSecretException(400, "getSecret Error"));
+        when(mockSecretManager.getSecret(
+                any(com.aws.greengrass.secretmanager.model.v1.GetSecretValueRequest.class))).thenThrow(
+                new GetSecretException(400, "getSecret Error"));
         when(mockAuthorizationHandler.isAuthorized(any(), any())).thenReturn(true);
 
         com.aws.greengrass.secretmanager.model.v1.GetSecretValueRequest request =
                 com.aws.greengrass.secretmanager.model.v1.GetSecretValueRequest.builder().secretId(SECRET_ID)
                         .versionId(VERSION_ID).build();
         byte[] byteRequest = OBJECT_MAPPER.writeValueAsBytes(request);
-        byte[] getSecretResponse = kernel.getContext().get(SecretManagerService.class).getSecret(serviceName,
-                byteRequest);
+        byte[] getSecretResponse =
+                kernel.getContext().get(SecretManagerService.class).getSecret(serviceName, byteRequest);
 
         com.aws.greengrass.secretmanager.model.v1.GetSecretValueError parsedResponse = convertError(getSecretResponse);
         assertEquals(400, parsedResponse.getStatus());
@@ -228,8 +231,7 @@ public class SecretManagerServiceTest {
         assertEquals("Unable to parse request", parsedResponse.getMessage());
 
         // now let the auth fail
-        when(mockAuthorizationHandler.isAuthorized(any(), any())).
-                thenThrow(new AuthorizationException("Auth error"));
+        when(mockAuthorizationHandler.isAuthorized(any(), any())).thenThrow(new AuthorizationException("Auth error"));
         getSecretResponse = kernel.getContext().get(SecretManagerService.class).getSecret(serviceName, byteRequest);
         parsedResponse = convertError(getSecretResponse);
 
@@ -239,8 +241,9 @@ public class SecretManagerServiceTest {
         //Case for generic errors
         reset(mockAuthorizationHandler);
         when(mockAuthorizationHandler.isAuthorized(any(), any())).thenReturn(true);
-        when(mockSecretManager.getSecret(any(com.aws.greengrass.secretmanager.model.v1.GetSecretValueRequest.class)))
-                .thenThrow(new RuntimeException("Generic Error"));
+        when(mockSecretManager.getSecret(
+                any(com.aws.greengrass.secretmanager.model.v1.GetSecretValueRequest.class))).thenThrow(
+                new RuntimeException("Generic Error"));
         getSecretResponse = kernel.getContext().get(SecretManagerService.class).getSecret(serviceName, byteRequest);
         parsedResponse = convertError(getSecretResponse);
 
@@ -268,10 +271,9 @@ public class SecretManagerServiceTest {
                 com.aws.greengrass.secretmanager.model.v1.GetSecretValueRequest.builder().secretId(SECRET_ID)
                         .versionId(VERSION_ID).build();
         byte[] byteRequest = OBJECT_MAPPER.writeValueAsBytes(request);
-        byte[] getSecretResponse = kernel.getContext().get(SecretManagerService.class).getSecret(serviceName,
-                byteRequest);
-        com.aws.greengrass.secretmanager.model.v1.GetSecretValueError actualResponse =
-                convertError(getSecretResponse);
+        byte[] getSecretResponse =
+                kernel.getContext().get(SecretManagerService.class).getSecret(serviceName, byteRequest);
+        com.aws.greengrass.secretmanager.model.v1.GetSecretValueError actualResponse = convertError(getSecretResponse);
 
         assertEquals(403, actualResponse.getStatus());
 
@@ -279,8 +281,8 @@ public class SecretManagerServiceTest {
         reset(mockAuthorizationHandler);
         when(mockAuthorizationHandler.isAuthorized(any(), any())).thenReturn(true);
         GetSecretException exception = new GetSecretException(400, "test");
-        when(mockSecretManager.getSecret(any(com.aws.greengrass.secretmanager.model.v1.GetSecretValueRequest.class)))
-                .thenThrow(exception);
+        when(mockSecretManager.getSecret(
+                any(com.aws.greengrass.secretmanager.model.v1.GetSecretValueRequest.class))).thenThrow(exception);
         getSecretResponse = kernel.getContext().get(SecretManagerService.class).getSecret(serviceName, byteRequest);
 
         actualResponse = convertError(getSecretResponse);

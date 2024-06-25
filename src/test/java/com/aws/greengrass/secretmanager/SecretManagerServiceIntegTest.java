@@ -38,12 +38,15 @@ import java.net.URI;
 import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.time.Instant;
+import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CountDownLatch;
-import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.TimeUnit;
 
+import static com.aws.greengrass.componentmanager.KernelConfigResolver.CONFIGURATION_CONFIG_KEY;
 import static com.aws.greengrass.deployment.DeviceConfiguration.DEVICE_PARAM_PRIVATE_KEY_PATH;
 import static com.aws.greengrass.deployment.DeviceConfiguration.SYSTEM_NAMESPACE_KEY;
+import static com.aws.greengrass.secretmanager.SecretManagerService.CLOUD_REQUEST_QUEUE_SIZE_TOPIC;
+import static com.aws.greengrass.secretmanager.SecretManagerService.PERFORMANCE_TOPIC;
 import static com.aws.greengrass.secretmanager.TestUtil.ignoreErrors;
 import static com.aws.greengrass.testcommons.testutilities.ExceptionLogProtector.ignoreExceptionOfType;
 import static org.hamcrest.MatcherAssert.assertThat;
@@ -52,14 +55,9 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
-import static org.mockito.ArgumentMatchers.anyLong;
-import static org.mockito.Mockito.atLeast;
 import static org.mockito.Mockito.lenient;
 import static org.mockito.Mockito.mock;
-import static org.mockito.Mockito.reset;
 import static org.mockito.Mockito.spy;
-import static org.mockito.Mockito.verify;
-import static org.mockito.Mockito.when;
 
 @ExtendWith({MockitoExtension.class, GGExtension.class})
 public class SecretManagerServiceIntegTest extends BaseITCase {
@@ -274,6 +272,58 @@ public class SecretManagerServiceIntegTest extends BaseITCase {
         assertEquals(arn, response2.getSecretId());
         assertEquals("updatedVersionId", response2.getVersionId());
         assertEquals("updatedSecretValue", response2.getSecretValue().getSecretString());
+    }
+
+    @Test
+    void GIVEN_secret_service_with_invalid_cloud_queue_size_WHEN_ipc_request_THEN_use_default_size() throws Exception {
+        startKernelWithConfig("config.yaml", State.RUNNING);
+        String arn = "arn:aws:secretsmanager:us-east-1:999936977227:secret:randomSecret-74lYJh";
+        int noOfCloudCalls = 130;
+        kernel.getConfig().lookupTopics("services", SecretManagerService.SECRET_MANAGER_SERVICE_NAME,
+                CONFIGURATION_CONFIG_KEY, PERFORMANCE_TOPIC).lookup(CLOUD_REQUEST_QUEUE_SIZE_TOPIC).withValue(0);
+        CountDownLatch responseLatch = new CountDownLatch(noOfCloudCalls);
+        lenient().doAnswer((i)->{
+            responseLatch.countDown();
+            return software.amazon.awssdk.services.secretsmanager.model.GetSecretValueResponse.builder()
+                            .name("randomSecret").arn(arn).secretString("updatedSecretValue").versionId("updatedVersionId")
+                            .versionStages("new").createdDate(Instant.now().minusSeconds(1000000)).build();
+                })
+                .when(secretClient).getSecret(GetSecretValueRequest.builder().secretId(arn).versionStage("new").build());
+
+        GreengrassCoreIPCClientV2 clientV2 = null;
+        try {
+            clientV2 = IPCTestUtils.connectV2Client(kernel, "ComponentRequestingSecrets");
+        } catch (IOException e) {
+            throw new RuntimeException(e);
+        }
+        CountDownLatch latch = new CountDownLatch(noOfCloudCalls);
+        for (int i=0;i<=noOfCloudCalls;i++) {
+            GreengrassCoreIPCClientV2 finalClientV = clientV2;
+            CompletableFuture.supplyAsync(()->{
+                software.amazon.awssdk.aws.greengrass.model.GetSecretValueRequest getSecret =
+                        new software.amazon.awssdk.aws.greengrass.model.GetSecretValueRequest();
+                getSecret.setSecretId("randomSecret");
+                getSecret.setVersionStage("new");
+                getSecret.setRefresh(true);
+                GetSecretValueResponse response= null;
+                try {
+
+                    response = finalClientV.getSecretValue(getSecret);
+                } catch (InterruptedException e) {
+                    throw new RuntimeException(e);
+                } catch (ServiceError err) {
+                    assertEquals("Unable to queue request",err.getMessage());
+                }
+                latch.countDown();
+                assertEquals(arn, response.getSecretId());
+                assertEquals("id2", response.getVersionId());
+                assertEquals("secretValue2", response.getSecretValue().getSecretString());
+                return null;
+            });
+        }
+        latch.await();
+        // At least 100 (default cloud call queue size) tasks are completed.Some tasks are rejected.
+        assertTrue(responseLatch.getCount()>0 && responseLatch.getCount()<=30);
     }
 
     @Test
