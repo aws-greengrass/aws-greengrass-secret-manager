@@ -8,6 +8,7 @@ package com.aws.greengrass.secretmanager;
 import com.aws.greengrass.config.Topic;
 import com.aws.greengrass.logging.api.Logger;
 import com.aws.greengrass.logging.impl.LogManager;
+import com.aws.greengrass.secretmanager.exception.FileSecretStoreException;
 import com.aws.greengrass.secretmanager.exception.SecretCryptoException;
 import com.aws.greengrass.secretmanager.exception.SecretManagerException;
 import com.aws.greengrass.secretmanager.exception.v1.GetSecretException;
@@ -30,13 +31,13 @@ import vendored.com.google.common.util.concurrent.CycleDetectingLockFactory;
 
 import java.nio.ByteBuffer;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.Collections;
 import java.util.Date;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
-import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.locks.Lock;
 import java.util.regex.Pattern;
 import javax.inject.Inject;
@@ -57,6 +58,7 @@ public class SecretManager {
             "arn:([^:]+):secretsmanager:[a-z0-9\\-]+:[0-9]{12}:secret:([a-zA-Z0-9\\\\]+/)*"
                     + "[a-zA-Z0-9/_+=,.@\\-]+(-[a-zA-Z0-9]+)?";
     private static final String secretNotFoundErr = "Secret not found ";
+    private static final String IPC_REQUEST_REFRESH_FIELD = "refresh";
     private final Logger logger = LogManager.getLogger(SecretManager.class);
     // Cache which holds aws secrets result
     private final Map<String, GetSecretValueResponse> cache = new HashMap<>();
@@ -120,12 +122,26 @@ public class SecretManager {
      * When the component is installed, it firsts cleans up/syncs the existing local secrets as per the component
      * configuration. It then tries to download latest secret from cloud for each configured secret-label. It then
      * updates the local store with that secret and refreshes the cache.
-     *
+     * @throws RuntimeException secret manager exceptions
      */
     public void syncFromCloud() {
         try (LockScope ls = LockScope.lock(syncFromCloudLock)) {
             List<SecretConfiguration> secretConfiguration = getSecretConfiguration();
             localStoreMap.syncWithConfig(secretConfiguration);
+            try {
+                reloadCache();
+            } catch (SecretManagerException e) {
+                if (e.getCause() instanceof FileSecretStoreException) {
+                    // Happens when the local store is corrupted. Local secret cache is cleared by the time this
+                    // exception is thrown as it is no longer valid. New secrets will be downloaded as needed. So, just
+                    // log and proceed.
+                    logger.atError().log("Exception occurred while updating the local secret cache.");
+                } else {
+                    // Should never happen. Throw any unexpected exceptions.
+                    throw new RuntimeException(e);
+                }
+            }
+
             for (SecretConfiguration configuredSecret : secretConfiguration) {
                 String arn = configuredSecret.getArn();
                 if (!Pattern.matches(VALID_SECRET_ARN_PATTERN, arn)) {
@@ -141,20 +157,20 @@ public class SecretManager {
     }
 
     /**
-     * load the secrets from a local store. This is used across restarts to load secrets from store. This method can be
-     * called from several threads 1. Service thread during start up 2. IPC thread when refresh is set to true. 3.
-     * Secret manager config subscription thread - syncFromCloud 4. scheduler thread that periodically refreshes secrets
-     * - syncFromCloud
+     * Load secrets into cache from the local store. This method can be called from several threads 1. Service thread
+     * during start up 2. IPC thread when refresh is set to true. 3. Secret manager config subscription thread -
+     * syncFromCloud 4. scheduler thread that periodically refreshes secrets - syncFromCloud
      *
      * @throws SecretManagerException when there are issues reading from disk
      */
     public void reloadCache() throws SecretManagerException {
         try (LockScope ls = LockScope.lock(cacheLock)) {
+            logger.atDebug("clear-local-secret-cache").log();
+            nameToArnMap.clear();
+            cache.clear();
             logger.atDebug("load-secret-local-store").log();
             // read the db
             List<AWSSecretResponse> secrets = secretStore.getAll().getSecrets();
-            nameToArnMap.clear();
-            cache.clear();
             if (!Utils.isEmpty(secrets)) {
                 for (AWSSecretResponse secretResult : secrets) {
                     nameToArnMap.put(secretResult.getName(), secretResult.getArn());
@@ -301,9 +317,14 @@ public class SecretManager {
     public software.amazon.awssdk.aws.greengrass.model.GetSecretValueResponse
     getSecret(software.amazon.awssdk.aws.greengrass.model.GetSecretValueRequest request)
             throws GetSecretException {
+        boolean refreshField = false;
+        boolean isRefreshFieldSupported = Arrays.stream(request.getClass().getDeclaredFields())
+                .anyMatch(((x) -> x.getName().equals(IPC_REQUEST_REFRESH_FIELD)));
+        if (isRefreshFieldSupported) {
+            refreshField = Coerce.toBoolean(request.isRefresh());
+        }
         GetSecretValueResponse secretResponse =
-                getSecret(request.getSecretId(), request.getVersionId(), request.getVersionStage(),
-                        Coerce.toBoolean(request.isRefresh()));
+                getSecret(request.getSecretId(), request.getVersionId(), request.getVersionStage(), refreshField);
             return translateModeltoIpc(secretResponse);
     }
 
