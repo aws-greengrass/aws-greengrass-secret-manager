@@ -15,5 +15,4 @@ public interface SecretStore<V, T> {
 
     T get(String secretArn, String label) throws SecretManagerException;
 
-    void save(T encryptedResult) throws SecretManagerException, JsonProcessingException;
 }
