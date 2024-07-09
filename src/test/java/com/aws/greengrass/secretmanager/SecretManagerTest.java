@@ -39,8 +39,6 @@ import software.amazon.awssdk.core.SdkBytes;
 import software.amazon.awssdk.services.secretsmanager.model.GetSecretValueResponse;
 
 import java.io.IOException;
-import java.net.URI;
-import java.net.URISyntaxException;
 import java.nio.ByteBuffer;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Paths;
@@ -53,13 +51,10 @@ import java.util.Base64;
 import java.util.Collections;
 import java.util.List;
 import java.util.UUID;
-import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 
 import static com.aws.greengrass.componentmanager.KernelConfigResolver.CONFIGURATION_CONFIG_KEY;
-import static com.aws.greengrass.secretmanager.SecretManagerService.CLOUD_REQUEST_QUEUE_SIZE_TOPIC;
-import static com.aws.greengrass.secretmanager.SecretManagerService.PERFORMANCE_TOPIC;
 import static com.aws.greengrass.secretmanager.SecretManagerService.SECRETS_TOPIC;
 import static com.aws.greengrass.testcommons.testutilities.ExceptionLogProtector.ignoreExceptionOfType;
 import static org.hamcrest.MatcherAssert.assertThat;
@@ -68,7 +63,6 @@ import static org.junit.jupiter.api.Assertions.assertArrayEquals;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
-import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.Mockito.doReturn;
@@ -646,7 +640,7 @@ class SecretManagerTest {
     @Test
     void GIVEN_secret_manager_WHEN_network_error_and_new_secret_THEN_throws(ExtensionContext context) throws Exception {
         ignoreExceptionOfType(context, SecretManagerException.class);
-
+        when(mockDao.getAll()).thenReturn(SecretDocument.builder().secrets(Collections.singletonList(loadMockDaoSecretA())).build());
         SecretManager sm = new SecretManager(mockAWSSecretClient, mockDao, mockKernelClient, localStoreMap);
         SecretConfiguration secret1 = SecretConfiguration.builder().arn(ARN_1).build();
         Configuration config = new Configuration(new Context());
@@ -736,12 +730,11 @@ class SecretManagerTest {
         ignoreExceptionOfType(context, SecretManagerException.class);
 
         loadMockSecrets();
-        when(mockAWSSecretClient.getSecret(any())).thenReturn(getMockSecretA());
         doThrow(SecretManagerException.class).when(mockDao).getAll();
 
         SecretManager sm = new SecretManager(mockAWSSecretClient, mockDao, mockKernelClient, localStoreMap);
-        sm.syncFromCloud();
         assertThrows(SecretManagerException.class, sm::reloadCache);
+        assertThrows(RuntimeException.class, sm::syncFromCloud);
     }
 
     @Test

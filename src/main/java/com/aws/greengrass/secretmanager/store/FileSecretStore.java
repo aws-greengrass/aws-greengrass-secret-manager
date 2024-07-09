@@ -7,6 +7,7 @@ package com.aws.greengrass.secretmanager.store;
 
 import com.aws.greengrass.config.Topic;
 import com.aws.greengrass.secretmanager.SecretManagerService;
+import com.aws.greengrass.secretmanager.exception.FileSecretStoreException;
 import com.aws.greengrass.secretmanager.exception.NoSecretFoundException;
 import com.aws.greengrass.secretmanager.exception.SecretManagerException;
 import com.aws.greengrass.secretmanager.kernel.KernelClient;
@@ -41,10 +42,9 @@ public class FileSecretStore implements SecretStore<SecretDocument, AWSSecretRes
     /**
      * Constructor.
      * @param kernelClient kernel client for accessing kernel root dir
-     * @throws SecretManagerException if root dir does not exist
      */
     @Inject
-    public FileSecretStore(KernelClient kernelClient) throws SecretManagerException {
+    public FileSecretStore(KernelClient kernelClient) {
         this.kernelClient = kernelClient;
     }
 
@@ -63,7 +63,7 @@ public class FileSecretStore implements SecretStore<SecretDocument, AWSSecretRes
         try {
             return OBJECT_MAPPER.readValue(Coerce.toString(secretResponseTopic), SecretDocument.class);
         } catch (IOException e) {
-            throw new SecretManagerException("Cannot read secret response from store", e);
+            throw new FileSecretStoreException("Cannot read secret response from store", e);
         }
     }
 
@@ -91,32 +91,6 @@ public class FileSecretStore implements SecretStore<SecretDocument, AWSSecretRes
         }
     }
 
-    @Override
-    public void save(AWSSecretResponse encryptedResult) throws SecretManagerException, JsonProcessingException {
-        Topic secretTopic = kernelClient.getConfig()
-                .lookup(SERVICES_NAMESPACE_TOPIC, SecretManagerService.SECRET_MANAGER_SERVICE_NAME,
-                        RUNTIME_STORE_NAMESPACE_TOPIC, SECRET_RESPONSE_TOPIC);
-        SecretDocument doc = OBJECT_MAPPER.readValue(secretTopic.toPOJO().toString(), SecretDocument.class);
-        List<AWSSecretResponse> responseList = doc.getSecrets();
-        // If the existing secrets in the store contain the version stages(labels) of the newly added secret, we have
-        // to remove those labels as labels are unique across different versions of a secret.
-        Iterator<AWSSecretResponse> secretsItr =
-                responseList.stream().filter(secret -> secret.getArn().equals(encryptedResult.getArn())).iterator();
-        encryptedResult.getVersionStages().forEach((label -> {
-            while (secretsItr.hasNext()) {
-                AWSSecretResponse response = secretsItr.next();
-                response.getVersionStages().remove(label);
-            }
-        }));
-        responseList.add(encryptedResult);
-        SecretDocument updatedDoc = SecretDocument.builder().secrets(responseList).build();
-        try {
-            secretTopic.withValue(OBJECT_MAPPER.writeValueAsString(updatedDoc));
-        } catch (JsonProcessingException e) {
-            throw new SecretManagerException("Cannot write secret response to store", e);
-        }
-    }
-
     /**
      * Save a secret document to underlying file store.
      *
@@ -130,7 +104,7 @@ public class FileSecretStore implements SecretStore<SecretDocument, AWSSecretRes
         try {
             secretTopic.withValue(OBJECT_MAPPER.writeValueAsString(doc));
         } catch (IOException e) {
-            throw new SecretManagerException("Cannot write secret response to store", e);
+            throw new FileSecretStoreException("Cannot write secret response to store", e);
         }
     }
 }
