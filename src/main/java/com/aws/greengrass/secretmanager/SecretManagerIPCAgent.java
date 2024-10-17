@@ -73,6 +73,7 @@ public class SecretManagerIPCAgent {
                 .findOrDefault(DEFAULT_CLOUD_REQUEST_SIZE, CLOUD_REQUEST_QUEUE_SIZE_TOPIC));
         if (cloudCallQueueSize <= 0) {
             logger.atWarn().kv("queueSize", DEFAULT_CLOUD_REQUEST_SIZE)
+                    .kv("configured", cloudCallQueueSize)
                     .log("Using default value for cloud request queue size as the configured value is invalid");
             cloudCallQueueSize = DEFAULT_CLOUD_REQUEST_SIZE;
         }

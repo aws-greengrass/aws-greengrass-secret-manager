@@ -29,7 +29,6 @@ import java.io.IOException;
 import java.util.Collections;
 import java.util.HashSet;
 import java.util.concurrent.CountDownLatch;
-import java.util.concurrent.ExecutorService;
 import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.ScheduledFuture;
 import java.util.concurrent.TimeUnit;
@@ -132,6 +131,18 @@ public class SecretManagerService extends PluginService {
                 }, 0, refreshIntervalSeconds, TimeUnit.SECONDS);
             }
         }
+    }
+
+    @Override
+    protected void shutdown() {
+        logger.atDebug().log("Shutting down secrets manager");
+        synchronized (scheduleSyncFutureLockObject) {
+            if (scheduledSyncFuture != null) {
+                scheduledSyncFuture.cancel(true);
+                scheduledSyncFuture = null;
+            }
+        }
+        logger.atDebug().log("Done shutting down secrets manager");
     }
 
     @Override
