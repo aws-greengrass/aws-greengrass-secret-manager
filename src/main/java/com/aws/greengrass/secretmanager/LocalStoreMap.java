@@ -18,13 +18,10 @@ import com.aws.greengrass.secretmanager.store.SecretStore;
 import com.aws.greengrass.security.SecurityService;
 import com.aws.greengrass.security.exceptions.ServiceUnavailableException;
 import com.aws.greengrass.util.Coerce;
-import com.aws.greengrass.util.LockFactory;
-import com.aws.greengrass.util.LockScope;
 import com.aws.greengrass.util.RetryUtils;
 import com.aws.greengrass.util.Utils;
 import software.amazon.awssdk.core.SdkBytes;
 import software.amazon.awssdk.services.secretsmanager.model.GetSecretValueResponse;
-import vendored.com.google.common.util.concurrent.CycleDetectingLockFactory;
 
 import java.net.URI;
 import java.nio.charset.StandardCharsets;
@@ -38,12 +35,10 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.atomic.AtomicReference;
-import java.util.concurrent.locks.Lock;
 import javax.inject.Inject;
 
 import static com.aws.greengrass.deployment.DeviceConfiguration.DEVICE_PARAM_CERTIFICATE_FILE_PATH;
 import static com.aws.greengrass.deployment.DeviceConfiguration.DEVICE_PARAM_PRIVATE_KEY_PATH;
-import static vendored.com.google.common.util.concurrent.CycleDetectingLockFactory.Policies.THROW;
 
 public class LocalStoreMap {
     private final Logger logger = LogManager.getLogger(LocalStoreMap.class);
@@ -51,10 +46,8 @@ public class LocalStoreMap {
     private final SecretStore<SecretDocument, AWSSecretResponse> secretStore;
     private final AtomicReference<Crypter> crypter = new AtomicReference<>();
     private final SecurityService securityService;
-
-    private final Lock lock = LockFactory.newReentrantLock(this);
-    private final Lock localStoreLock = CycleDetectingLockFactory.newInstance(THROW).newReentrantLock(
-            "lockStoreLock");
+    private final Object crypterLockObject = new Object();
+    private final Object localStoreLockObject = new Object();
 
     @Inject
     LocalStoreMap(SecurityService securityService, FileSecretStore dao, DeviceConfiguration deviceConfiguration) {
@@ -64,7 +57,7 @@ public class LocalStoreMap {
             if (validUpdate(node, DEVICE_PARAM_CERTIFICATE_FILE_PATH) || validUpdate(node,
                     DEVICE_PARAM_PRIVATE_KEY_PATH)) {
                 // TODO: Trigger downloading new secrets from cloud and encrypt them with the new creds.
-                try (LockScope ls = LockScope.lock(lock)) {
+                synchronized (crypterLockObject) {
                     crypter.set(null);
                 }
             }
@@ -77,7 +70,7 @@ public class LocalStoreMap {
     }
 
     protected Crypter getCrypter() throws SecretCryptoException {
-        try (LockScope ls = LockScope.lock(lock)) {
+        synchronized (crypterLockObject) {
             if (crypter.get() == null) {
                 try {
                     loadCrypter();
@@ -117,7 +110,7 @@ public class LocalStoreMap {
     Cache should be updated whenever the store is updated.
      */
     private void save(List<SecretConfiguration> secretConfiguration) {
-        try (LockScope ls = LockScope.lock(localStoreLock)) {
+        synchronized (localStoreLockObject) {
             List<AWSSecretResponse> responses = new ArrayList<>();
             if (!secrets.isEmpty()) {
                 secretConfiguration.forEach((secretConfig) -> {
@@ -177,7 +170,7 @@ public class LocalStoreMap {
     }
 
     private void updateWithSecret(AWSSecretResponse secretResponse, List<SecretConfiguration> secretConfiguration) {
-        try (LockScope ls = LockScope.lock(localStoreLock)) {
+        synchronized (localStoreLockObject) {
             reloadSecretsFromLocalStore();
             String arn = secretResponse.getArn();
             if (secrets.containsKey(arn)) {
@@ -276,7 +269,7 @@ public class LocalStoreMap {
      * }
      */
     private void reloadSecretsFromLocalStore() {
-        try (LockScope ls = LockScope.lock(localStoreLock)) {
+        synchronized (localStoreLockObject) {
             SecretDocument doc;
             try {
                 doc = secretStore.getAll();

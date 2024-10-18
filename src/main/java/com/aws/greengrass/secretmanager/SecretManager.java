@@ -19,7 +19,6 @@ import com.aws.greengrass.secretmanager.model.SecretDocument;
 import com.aws.greengrass.secretmanager.store.FileSecretStore;
 import com.aws.greengrass.secretmanager.store.SecretStore;
 import com.aws.greengrass.util.Coerce;
-import com.aws.greengrass.util.LockScope;
 import com.aws.greengrass.util.Utils;
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.MapperFeature;
@@ -27,7 +26,6 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import software.amazon.awssdk.aws.greengrass.model.SecretValue;
 import software.amazon.awssdk.services.secretsmanager.model.GetSecretValueRequest;
 import software.amazon.awssdk.services.secretsmanager.model.GetSecretValueResponse;
-import vendored.com.google.common.util.concurrent.CycleDetectingLockFactory;
 
 import java.nio.ByteBuffer;
 import java.util.ArrayList;
@@ -38,13 +36,11 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
-import java.util.concurrent.locks.Lock;
 import java.util.regex.Pattern;
 import javax.inject.Inject;
 
 import static com.aws.greengrass.componentmanager.KernelConfigResolver.CONFIGURATION_CONFIG_KEY;
 import static com.aws.greengrass.secretmanager.SecretManagerService.SECRETS_TOPIC;
-import static vendored.com.google.common.util.concurrent.CycleDetectingLockFactory.Policies.THROW;
 
 /**
  * Class which holds the business logic for secret management. This class always holds a copy of actual AWS secrets
@@ -70,12 +66,9 @@ public class SecretManager {
     private final KernelClient kernelClient;
     private static final ObjectMapper OBJECT_MAPPER =
             new ObjectMapper().configure(MapperFeature.ACCEPT_CASE_INSENSITIVE_PROPERTIES, true);
-    private final Lock cacheLock = CycleDetectingLockFactory.newInstance(THROW).newReentrantLock(
-            "cacheLock");
 
-    private final Lock syncFromCloudLock = CycleDetectingLockFactory.newInstance(THROW).newReentrantLock(
-            "syncFromCloudLock");
-
+    private final Object syncFromCloudLockObject = new Object();
+    private final Object cacheLockObject = new Object();
 
     /**
      * Constructor.
@@ -125,7 +118,7 @@ public class SecretManager {
      * @throws RuntimeException secret manager exceptions
      */
     public void syncFromCloud() {
-        try (LockScope ls = LockScope.lock(syncFromCloudLock)) {
+        synchronized (syncFromCloudLockObject) {
             List<SecretConfiguration> secretConfiguration = getSecretConfiguration();
             localStoreMap.syncWithConfig(secretConfiguration);
             try {
@@ -164,7 +157,7 @@ public class SecretManager {
      * @throws SecretManagerException when there are issues reading from disk
      */
     public void reloadCache() throws SecretManagerException {
-        try (LockScope ls = LockScope.lock(cacheLock)) {
+        synchronized (cacheLockObject) {
             logger.atDebug("clear-local-secret-cache").log();
             nameToArnMap.clear();
             cache.clear();
@@ -189,7 +182,7 @@ public class SecretManager {
     * arn1:l2 -> secret4
     */
     private void loadCache(AWSSecretResponse awsSecretResponse) {
-        try (LockScope ls = LockScope.lock(cacheLock)) {
+        synchronized (cacheLockObject) {
             GetSecretValueResponse decryptedResponse = null;
             try {
                 decryptedResponse = localStoreMap.decrypt(awsSecretResponse);

@@ -19,28 +19,23 @@ import com.aws.greengrass.secretmanager.exception.v1.GetSecretException;
 import com.aws.greengrass.secretmanager.model.v1.GetSecretValueError;
 import com.aws.greengrass.secretmanager.model.v1.GetSecretValueResult;
 import com.aws.greengrass.util.Coerce;
-import com.aws.greengrass.util.LockScope;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.MapperFeature;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import lombok.Setter;
 import software.amazon.awssdk.aws.greengrass.GreengrassCoreIPCService;
-import vendored.com.google.common.util.concurrent.CycleDetectingLockFactory;
 
 import java.io.IOException;
 import java.util.Collections;
 import java.util.HashSet;
 import java.util.concurrent.CountDownLatch;
-import java.util.concurrent.ExecutorService;
 import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.ScheduledFuture;
 import java.util.concurrent.TimeUnit;
-import java.util.concurrent.locks.Lock;
 import javax.inject.Inject;
 
 import static com.aws.greengrass.componentmanager.KernelConfigResolver.CONFIGURATION_CONFIG_KEY;
 import static software.amazon.awssdk.aws.greengrass.GreengrassCoreIPCService.GET_SECRET_VALUE;
-import static vendored.com.google.common.util.concurrent.CycleDetectingLockFactory.Policies.THROW;
 
 @ImplementsService(name = SecretManagerService.SECRET_MANAGER_SERVICE_NAME)
 public class SecretManagerService extends PluginService {
@@ -55,10 +50,8 @@ public class SecretManagerService extends PluginService {
 
     private final SecretManager secretManager;
     private final AuthorizationHandler authorizationHandler;
-    private final ExecutorService executor;
     private ScheduledFuture<?> scheduledSyncFuture = null;
-    private final Lock scheduleSyncFutureLock =
-            CycleDetectingLockFactory.newInstance(THROW).newReentrantLock("scheduleSyncFutureLock");
+    private final Object scheduleSyncFutureLockObject = new Object();
     private final ScheduledExecutorService ses;
     private final ChildChanged handleConfigurationChangeLambda = (whatHappened, node) -> {
         if (whatHappened == WhatHappened.timestampUpdated || whatHappened == WhatHappened.interiorAdded) {
@@ -87,16 +80,14 @@ public class SecretManagerService extends PluginService {
      * @param topics               root Configuration topic for this service
      * @param secretManager        secret manager which manages secrets
      * @param authorizationHandler authorization handler
-     * @param executorService executor service
      * @param ses scheduled executor service
      */
     @Inject
     public SecretManagerService(Topics topics, SecretManager secretManager, AuthorizationHandler authorizationHandler,
-                                ExecutorService executorService, ScheduledExecutorService ses) {
+                                ScheduledExecutorService ses) {
         super(topics);
         this.secretManager = secretManager;
         this.authorizationHandler = authorizationHandler;
-        this.executor = executorService;
         this.ses = ses;
     }
 
@@ -112,7 +103,7 @@ public class SecretManagerService extends PluginService {
     }
 
     private void serviceChanged() {
-        try (LockScope ls = LockScope.lock(scheduleSyncFutureLock)) {
+        synchronized (scheduleSyncFutureLockObject) {
             if (scheduledSyncFuture != null) {
                 scheduledSyncFuture.cancel(false);
                 scheduledSyncFuture = null;
@@ -140,6 +131,18 @@ public class SecretManagerService extends PluginService {
                 }, 0, refreshIntervalSeconds, TimeUnit.SECONDS);
             }
         }
+    }
+
+    @Override
+    protected void shutdown() {
+        logger.atDebug().log("Shutting down secrets manager");
+        synchronized (scheduleSyncFutureLockObject) {
+            if (scheduledSyncFuture != null) {
+                scheduledSyncFuture.cancel(true);
+                scheduledSyncFuture = null;
+            }
+        }
+        logger.atDebug().log("Done shutting down secrets manager");
     }
 
     @Override

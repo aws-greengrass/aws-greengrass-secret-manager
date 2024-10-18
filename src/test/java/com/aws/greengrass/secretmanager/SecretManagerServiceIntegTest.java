@@ -11,6 +11,7 @@ import com.aws.greengrass.integrationtests.BaseITCase;
 import com.aws.greengrass.integrationtests.ipc.IPCTestUtils;
 import com.aws.greengrass.lifecyclemanager.GreengrassService;
 import com.aws.greengrass.lifecyclemanager.Kernel;
+import com.aws.greengrass.logging.impl.config.LogConfig;
 import com.aws.greengrass.secretmanager.exception.SecretCryptoException;
 import com.aws.greengrass.secretmanager.exception.SecretManagerException;
 import com.aws.greengrass.secretmanager.exception.v1.GetSecretException;
@@ -26,6 +27,7 @@ import org.junit.jupiter.api.extension.ExtensionContext;
 import org.junit.jupiter.api.io.TempDir;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
+import org.slf4j.event.Level;
 import software.amazon.awssdk.aws.greengrass.GreengrassCoreIPCClientV2;
 import software.amazon.awssdk.aws.greengrass.model.GetSecretValueResponse;
 import software.amazon.awssdk.aws.greengrass.model.ResourceNotFoundError;
@@ -276,13 +278,14 @@ public class SecretManagerServiceIntegTest extends BaseITCase {
 
     @Test
     void GIVEN_secret_service_with_invalid_cloud_queue_size_WHEN_ipc_request_THEN_use_default_size() throws Exception {
+        LogConfig.getRootLogConfig().setLevel(Level.DEBUG);
         startKernelWithConfig("config.yaml", State.RUNNING);
         String arn = "arn:aws:secretsmanager:us-east-1:999936977227:secret:randomSecret-74lYJh";
         int noOfCloudCalls = 130;
         kernel.getConfig().lookupTopics("services", SecretManagerService.SECRET_MANAGER_SERVICE_NAME,
                 CONFIGURATION_CONFIG_KEY, PERFORMANCE_TOPIC).lookup(CLOUD_REQUEST_QUEUE_SIZE_TOPIC).withValue(0);
         CountDownLatch responseLatch = new CountDownLatch(noOfCloudCalls);
-        lenient().doAnswer((i)->{
+        lenient().doAnswer((i)-> {
             responseLatch.countDown();
             return software.amazon.awssdk.services.secretsmanager.model.GetSecretValueResponse.builder()
                             .name("randomSecret").arn(arn).secretString("updatedSecretValue").versionId("updatedVersionId")
@@ -321,7 +324,7 @@ public class SecretManagerServiceIntegTest extends BaseITCase {
                 return null;
             });
         }
-        latch.await();
+        latch.await(3, TimeUnit.MINUTES);
         // At least 100 (default cloud call queue size) tasks are completed.Some tasks are rejected.
         assertTrue(responseLatch.getCount()>0 && responseLatch.getCount()<=30);
     }
