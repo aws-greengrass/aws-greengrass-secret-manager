@@ -116,9 +116,9 @@ public class LocalStoreMap {
                 secretConfiguration.forEach((secretConfig) -> {
                     secretConfig.getLabels().forEach((label) -> {
                         String arn = secretConfig.getArn();
-                        if (secrets.containsKey(arn) && secrets.get(arn).responseMap.containsKey(label)) {
-                            responses.add(secrets.get(arn).responseMap.get(label));
-                        }
+                        secrets.entrySet().stream().filter(entry -> entry.getKey().contains(arn))
+                                .filter(entry -> entry.getValue().responseMap.containsKey(label))
+                                .forEach(entry -> responses.add(entry.getValue().responseMap.get(label)));
                     });
                 });
             }

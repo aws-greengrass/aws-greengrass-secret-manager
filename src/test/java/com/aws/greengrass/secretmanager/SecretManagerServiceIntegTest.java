@@ -112,6 +112,15 @@ public class SecretManagerServiceIntegTest extends BaseITCase {
                 .name(secretName).arn(secretArn).secretString("secretValue2").versionId("id2")
                 .versionStages("new").createdDate(Instant.now().minusSeconds(1000000)).build())
                 .when(secretClient).getSecret(GetSecretValueRequest.builder().secretId(secretArn).versionStage("new").build());
+
+        lenient().doReturn(
+                software.amazon.awssdk.services.secretsmanager.model.GetSecretValueResponse.builder().name("partialarn")
+                        .arn("arn:aws:secretsmanager:us-east-1:999936977227:secret:partialarn" + "-43lYMk")
+                        .secretString("secretValue").versionId("partialarnid").versionStages(CURRENT_LABEL)
+                        .createdDate(Instant.now().minusSeconds(1000000)).build()).when(secretClient).getSecret(
+                GetSecretValueRequest.builder()
+                        .secretId("arn:aws:secretsmanager:us" + "-east-1:999936977227:secret:partialarn")
+                        .versionStage(CURRENT_LABEL).build());
     }
 
     @AfterEach
@@ -215,6 +224,22 @@ public class SecretManagerServiceIntegTest extends BaseITCase {
         GetSecretValueResponse response= clientV2.getSecretValue(secretExists);
         assertEquals("arn:aws:secretsmanager:us-east-1:999936977227:secret:randomSecret-74lYJh", response.getSecretId());
         assertEquals(VERSION_ID, response.getVersionId());
+        assertTrue(response.getVersionStage().contains(CURRENT_LABEL));
+        assertEquals("secretValue", response.getSecretValue().getSecretString());
+    }
+
+    @Test
+    void GIVEN_secret_service_WHEN_ipc_request_partialarn_THEN_correct_response_returned() throws Exception {
+        startKernelWithConfig("config.yaml", State.RUNNING);
+        software.amazon.awssdk.aws.greengrass.model.GetSecretValueRequest secretWithPartialArn =
+                new software.amazon.awssdk.aws.greengrass.model.GetSecretValueRequest();
+        secretWithPartialArn.setSecretId("partialarn");
+
+
+        GreengrassCoreIPCClientV2 clientV2 = IPCTestUtils.connectV2Client(kernel, "ComponentRequestingSecrets");
+        GetSecretValueResponse response = clientV2.getSecretValue(secretWithPartialArn);
+        assertEquals("arn:aws:secretsmanager:us-east-1:999936977227:secret:partialarn-43lYMk", response.getSecretId());
+        assertEquals("partialarnid", response.getVersionId());
         assertTrue(response.getVersionStage().contains(CURRENT_LABEL));
         assertEquals("secretValue", response.getSecretValue().getSecretString());
     }
