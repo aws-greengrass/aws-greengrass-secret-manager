@@ -778,6 +778,7 @@ class SecretManagerTest {
     void GIVEN_secret_manager_WHEN_get_called_with_invalid_request_THEN_proper_errors_are_returned() throws Exception {
         loadMockSecrets();
         SecretManager sm = new SecretManager(mockAWSSecretClient,mockDao,mockKernelClient, localStoreMap);
+        when(mockDao.getAll()).thenReturn(SecretDocument.builder().secrets(new ArrayList<>()).build());
         software.amazon.awssdk.aws.greengrass.model.GetSecretValueRequest request =
                 new software.amazon.awssdk.aws.greengrass.model.GetSecretValueRequest();
         try {
