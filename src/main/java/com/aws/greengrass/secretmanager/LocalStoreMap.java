@@ -281,13 +281,6 @@ public class LocalStoreMap {
                 return;
             }
             for (AWSSecretResponse secretResponse : doc.getSecrets()) {
-                try {
-                    decrypt(secretResponse);
-                } catch (SecretCryptoException e) {
-                    logger.atWarn().kv("secretArn", secretResponse.getArn()).kv("label", secretResponse.getVersionId())
-                            .log("Unable to decrypt the secret in local store.");
-                    continue;
-                }
                 secrets.putIfAbsent(secretResponse.getArn(), new Labels(new HashMap<>()));
                 secretResponse.getVersionStages().forEach((label) -> {
                     secrets.get(secretResponse.getArn()).responseMap.put(label, secretResponse);

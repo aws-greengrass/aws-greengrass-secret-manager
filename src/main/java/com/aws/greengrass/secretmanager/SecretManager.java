@@ -329,20 +329,28 @@ public class SecretManager {
      * @throws GetSecretException when secret is not found
      */
     public String validateSecretId(String secretId) throws GetSecretException {
-        String arn = secretId;
         if (Utils.isEmpty(secretId)) {
             throw new GetSecretException(400, "SecretId absent in the request");
         }
-        // normalize name to arn
-        if (!Pattern.matches(VALID_SECRET_ARN_PATTERN, secretId)) {
-            arn = nameToArnMap.get(secretId);
-            if (arn == null) {
+        try {
+            return getArnFromCache(secretId);
+        } catch (GetSecretException e) {
+            try {
+                reloadCache();
+                return getArnFromCache(secretId); // throw GetSecretException if the secret doesn't exist
+            } catch (SecretManagerException ex) {
                 throw new GetSecretException(404, secretNotFoundErr + secretId);
             }
         }
+    }
 
-        // We cannot just return the value, as same arn can have multiple labels associated to it.
-        if (!cache.containsKey(arn)) {
+    private String getArnFromCache(String secretId) throws GetSecretException {
+        String arn = secretId;
+        boolean isNotAnArn = !Pattern.matches(VALID_SECRET_ARN_PATTERN, secretId);
+        if (isNotAnArn) {
+            arn = nameToArnMap.get(secretId);
+        }
+        if (arn == null || !cache.containsKey(arn)) {
             throw new GetSecretException(404, secretNotFoundErr + secretId);
         }
         return arn;

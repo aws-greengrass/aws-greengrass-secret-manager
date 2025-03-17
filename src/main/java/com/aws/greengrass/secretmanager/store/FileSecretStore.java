@@ -15,13 +15,10 @@ import com.aws.greengrass.secretmanager.model.AWSSecretResponse;
 import com.aws.greengrass.secretmanager.model.SecretDocument;
 import com.aws.greengrass.util.Coerce;
 import com.aws.greengrass.util.Utils;
-import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.MapperFeature;
 import com.fasterxml.jackson.databind.ObjectMapper;
 
 import java.io.IOException;
-import java.util.Iterator;
-import java.util.List;
 import javax.inject.Inject;
 
 import static com.aws.greengrass.lifecyclemanager.GreengrassService.RUNTIME_STORE_NAMESPACE_TOPIC;
