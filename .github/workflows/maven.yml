@@ -45,13 +45,13 @@ jobs:
         shell: cmd
         if: matrix.os == 'windows-latest'
       - name: Upload Failed Test Report
-        uses: actions/upload-artifact@v3
+        uses: actions/upload-artifact@v4
         if: failure()
         with:
           name: Failed Test Report
           path: target/surefire-reports
       - name: Upload Coverage
-        uses: actions/upload-artifact@v3
+        uses: actions/upload-artifact@v4
         if: matrix.os == 'ubuntu-latest'
         with:
           name: Coverage Report ${{ matrix.os }}

@@ -15,6 +15,8 @@ import com.aws.greengrass.logging.impl.config.LogConfig;
 import com.aws.greengrass.secretmanager.exception.SecretCryptoException;
 import com.aws.greengrass.secretmanager.exception.SecretManagerException;
 import com.aws.greengrass.secretmanager.exception.v1.GetSecretException;
+import com.aws.greengrass.secretmanager.model.AWSSecretResponse;
+import com.aws.greengrass.secretmanager.store.FileSecretStore;
 import com.aws.greengrass.security.SecurityService;
 import com.aws.greengrass.security.exceptions.KeyLoadingException;
 import com.aws.greengrass.testcommons.testutilities.GGExtension;
@@ -54,11 +56,13 @@ import static com.aws.greengrass.testcommons.testutilities.ExceptionLogProtector
 import static org.hamcrest.MatcherAssert.assertThat;
 import static org.hamcrest.Matchers.containsString;
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.lenient;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.reset;
 import static org.mockito.Mockito.spy;
 
 @ExtendWith({MockitoExtension.class, GGExtension.class})
@@ -178,6 +182,11 @@ public class SecretManagerServiceIntegTest extends BaseITCase {
         lenient().doThrow(KeyLoadingException.class).when(mockSecurityService).getKeyPair(any(),
                 any());
         kernel.getConfig().lookup(SYSTEM_NAMESPACE_KEY, DEVICE_PARAM_PRIVATE_KEY_PATH).withValue("someKey.pem");
+        kernel.getContext().runOnPublishQueueAndWait(() -> {
+        });
+        // Assert that crypter is unavailable
+        LocalStoreMap map = kernel.getContext().get(LocalStoreMap.class);
+        assertThrows(SecretCryptoException.class, ()->map.getCrypter());
         software.amazon.awssdk.aws.greengrass.model.GetSecretValueRequest secretExists =
                 new software.amazon.awssdk.aws.greengrass.model.GetSecretValueRequest();
         secretExists.setSecretId("randomSecret");
@@ -188,6 +197,65 @@ public class SecretManagerServiceIntegTest extends BaseITCase {
         assertEquals("arn:aws:secretsmanager:us-east-1:999936977227:secret:randomSecret-74lYJh", response.getSecretId());
         assertEquals(VERSION_ID, response.getVersionId());
         assertTrue(response.getVersionStage().contains(CURRENT_LABEL));
+        assertEquals("secretValue", response.getSecretValue().getSecretString());
+    }
+
+    @Test
+    void GIVEN_secret_service_WHEN_security_service_unavailable_THEN_local_secret_persists_and_cache_updates(ExtensionContext context) throws Exception {
+        startKernelWithConfig("config.yaml", State.RUNNING);
+        ignoreExceptionOfType(context, SecretCryptoException.class);
+        ignoreExceptionOfType(context, GetSecretException.class);
+        software.amazon.awssdk.aws.greengrass.model.GetSecretValueRequest secretExists =
+                new software.amazon.awssdk.aws.greengrass.model.GetSecretValueRequest();
+        secretExists.setSecretId("randomSecret");
+        secretExists.setVersionId(VERSION_ID);
+        GreengrassCoreIPCClientV2 clientV2 = IPCTestUtils.connectV2Client(kernel, "ComponentRequestingSecrets");
+        // Secret exists in cache
+        GetSecretValueResponse response= clientV2.getSecretValue(secretExists);
+        assertEquals("arn:aws:secretsmanager:us-east-1:999936977227:secret:randomSecret-74lYJh", response.getSecretId());
+        assertEquals(VERSION_ID, response.getVersionId());
+        assertTrue(response.getVersionStage().contains(CURRENT_LABEL));
+        assertEquals("secretValue", response.getSecretValue().getSecretString());
+        SecretManagerService service = kernel.getContext().get(SecretManagerService.class);
+        // Keypair loading with ServiceUnavailableException takes 5 minutes to complete. So, fail keypair loading
+        // with a non-retryable exception.
+        lenient().doThrow(KeyLoadingException.class).when(mockSecurityService).getKeyPair(any(),
+                any());
+        // Change config, so that crypter is reloaded
+        kernel.getConfig().lookup(SYSTEM_NAMESPACE_KEY, DEVICE_PARAM_PRIVATE_KEY_PATH).withValue("someKey.pem");
+        kernel.getContext().runOnPublishQueueAndWait(() -> {
+        });
+        // Assert that crypter is unavailable
+        LocalStoreMap map = kernel.getContext().get(LocalStoreMap.class);
+        assertThrows(SecretCryptoException.class, ()->map.getCrypter());
+
+        // Restart secret manager service so the in-memory cache of secrets cleared
+        service.requestRestart();
+        CountDownLatch secretManagerRun = new CountDownLatch(1);
+        kernel.getContext().addGlobalStateChangeListener((GreengrassService services, State was, State newState) -> {
+            if (services.getName().equals(SecretManagerService.SECRET_MANAGER_SERVICE_NAME) && services.getState()
+                    .equals(State.RUNNING)) {
+                secretManagerRun.countDown();
+            }
+        });
+        secretManagerRun.await();
+
+        // Then secrets still exist on disk
+        FileSecretStore fs = kernel.getContext().get(FileSecretStore.class);
+        AWSSecretResponse res = fs.get("arn:aws:secretsmanager:us-east-1:999936977227:secret:randomSecret-74lYJh",
+                CURRENT_LABEL);
+        assertEquals("arn:aws:secretsmanager:us-east-1:999936977227:secret:randomSecret-74lYJh",res.getArn());
+        // The secret is not present in cache
+        assertThrows(ResourceNotFoundError.class, ()->clientV2.getSecretValue(secretExists));
+
+        // Make security service available without secret manager restart
+        URI privateKey = getClass().getResource("privateKey.pem").toURI();
+        lenient().doReturn(EncryptionUtils.loadPrivateKeyPair(Paths.get(privateKey))).when(mockSecurityService).getKeyPair(any(), any());
+        res = fs.get("arn:aws:secretsmanager:us-east-1:999936977227:secret:randomSecret-74lYJh",
+                CURRENT_LABEL);
+        assertEquals("arn:aws:secretsmanager:us-east-1:999936977227:secret:randomSecret-74lYJh",res.getArn());
+        response = clientV2.getSecretValue(secretExists);
+        // secret is loaded into cache
         assertEquals("secretValue", response.getSecretValue().getSecretString());
     }
 
