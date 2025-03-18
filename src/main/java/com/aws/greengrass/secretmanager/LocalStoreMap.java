@@ -32,6 +32,7 @@ import java.util.ArrayList;
 import java.util.Base64;
 import java.util.Collections;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.atomic.AtomicReference;
@@ -124,6 +125,12 @@ public class LocalStoreMap {
             }
 
             try {
+                HashSet<AWSSecretResponse> latestSecrets = new HashSet<>(responses);
+                HashSet<AWSSecretResponse> existingSecrets = new HashSet<>(secretStore.getAll().getSecrets());
+                if (latestSecrets.equals(existingSecrets)) {
+                    logger.atDebug().log("Not updating local store as the secrets are not modified");
+                    return;
+                }
                 secretStore.saveAll(new SecretDocument(responses));
             } catch (SecretManagerException e) {
                 logger.atError().log("Unable to update the local store.");
@@ -161,12 +168,30 @@ public class LocalStoreMap {
      * }
      * @param result secret response to encrypt
      * @param secretConfiguration secret manager component configuration
+     * @return true if the secret is updated in the local store, false otherwise.
      * @throws SecretCryptoException when encryption fails
      */
-    public void updateWithSecret(GetSecretValueResponse result, List<SecretConfiguration> secretConfiguration)
+    public boolean updateWithSecret(GetSecretValueResponse result, List<SecretConfiguration> secretConfiguration)
             throws SecretCryptoException {
-        AWSSecretResponse secretResponse = encryptAWSResponse(result);
-        updateWithSecret(secretResponse, secretConfiguration);
+        Labels labels = secrets.get(result.arn());
+        boolean isSecretInStore = labels != null && labels.responseMap != null;
+        // If the downloaded secret doesn't exist in the store, then update the store with that secret
+        // If a secret exists in the store but is different from the downloaded secret, then update the store
+        HashSet<String> downloadedLabels = new HashSet<>(result.versionStages());
+        HashSet<String> existingLabels = isSecretInStore ? new HashSet<>(labels.responseMap.keySet()) : new HashSet<>();
+        boolean shouldUpdateSecretInStore =
+                !isSecretInStore || !downloadedLabels.equals(existingLabels) || downloadedLabels.stream()
+                        .anyMatch((label) -> {
+                            AWSSecretResponse response = labels.responseMap.get(label);
+                            // For each label of the downloaded secret, compare it secret version with the secret
+                            // version of the existing labels in the local store.
+                            return response == null || !response.getVersionId().equals(result.versionId());
+                        });
+        if (shouldUpdateSecretInStore) {
+            AWSSecretResponse secretResponse = encryptAWSResponse(result);
+            updateWithSecret(secretResponse, secretConfiguration);
+        }
+        return shouldUpdateSecretInStore;
     }
 
     private void updateWithSecret(AWSSecretResponse secretResponse, List<SecretConfiguration> secretConfiguration) {

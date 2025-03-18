@@ -218,9 +218,10 @@ public class SecretManager {
         try {
             GetSecretValueResponse response = secretClient.getSecret(request);
             logger.atDebug().kv("secret", arn).kv("versionStage", versionStage).log("Downloaded secret from cloud");
-            localStoreMap.updateWithSecret(response, getSecretConfiguration());
-            // Reload cache with every secret update
-            reloadCache();
+            if (localStoreMap.updateWithSecret(response, getSecretConfiguration())) {
+                // Reload cache with every secret update
+                reloadCache();
+            }
         } catch (SecretCryptoException | SecretManagerException  e) {
             logger.atError().kv("secret", arn).kv("versionStage", versionStage).cause(e)
                     .log("Unable to refresh secret from cloud. Local store will not be updated");
