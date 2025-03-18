@@ -11,8 +11,7 @@ services:
   aws.greengrass.SecretManager:
     configuration:
       cloudSecrets:
-        - arn: "arn:aws:secretsmanager:us-east-1:999936977227:secret:randomSecret-74lYJh"
-        - arn: "arn:aws:secretsmanager:us-east-1:999936977227:secret:randomSecret-74lYJh"
+        - arn: "arn:aws:secretsmanager:us-east-1:999936977227:secret:Secret1-74lYJh"
           labels:
             - "new"
         - arn: "arn:aws:secretsmanager:us-east-1:999936977227:secret:partialarn"
