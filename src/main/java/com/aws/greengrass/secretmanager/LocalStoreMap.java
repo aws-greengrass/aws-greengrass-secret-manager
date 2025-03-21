@@ -71,16 +71,15 @@ public class LocalStoreMap {
 
     protected Crypter getCrypter() throws SecretCryptoException {
         synchronized (crypterLockObject) {
-            if (crypter.get() == null) {
-                try {
-                    loadCrypter();
-                } catch (Exception e) {
-                    throw new SecretCryptoException("Unable to load crypter", e);
-                }
+            try {
+                loadCrypter();
+                return crypter.get();
+            } catch (Exception e) {
+                throw new SecretCryptoException("Unable to load crypter", e);
             }
-            return crypter.get();
-        }
+         }
     }
+
 
     private void loadCrypter() throws Exception {
         try {
