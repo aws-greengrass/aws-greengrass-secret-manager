@@ -56,13 +56,11 @@ import static com.aws.greengrass.testcommons.testutilities.ExceptionLogProtector
 import static org.hamcrest.MatcherAssert.assertThat;
 import static org.hamcrest.Matchers.containsString;
 import static org.junit.jupiter.api.Assertions.assertEquals;
-import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.lenient;
 import static org.mockito.Mockito.mock;
-import static org.mockito.Mockito.reset;
 import static org.mockito.Mockito.spy;
 
 @ExtendWith({MockitoExtension.class, GGExtension.class})
@@ -104,8 +102,8 @@ public class SecretManagerServiceIntegTest extends BaseITCase {
     }
 
     private void mockSecretResponse() throws SecretManagerException, IOException {
-        String secretArn = "arn:aws:secretsmanager:us-east-1:999936977227:secret:randomSecret-74lYJh";
-        String secretName = "randomSecret";
+        String secretArn = "arn:aws:secretsmanager:us-east-1:999936977227:secret:Secret1-74lYJh";
+        String secretName = "Secret1";
         lenient().doReturn(software.amazon.awssdk.services.secretsmanager.model.GetSecretValueResponse.builder()
                 .name(secretName).arn(secretArn).secretString("secretValue").versionId(VERSION_ID)
                 .versionStages(CURRENT_LABEL)
@@ -189,12 +187,12 @@ public class SecretManagerServiceIntegTest extends BaseITCase {
         assertThrows(SecretCryptoException.class, ()->map.getCrypter());
         software.amazon.awssdk.aws.greengrass.model.GetSecretValueRequest secretExists =
                 new software.amazon.awssdk.aws.greengrass.model.GetSecretValueRequest();
-        secretExists.setSecretId("randomSecret");
+        secretExists.setSecretId("Secret1");
         secretExists.setVersionId(VERSION_ID);
 
         GreengrassCoreIPCClientV2 clientV2 = IPCTestUtils.connectV2Client(kernel, "ComponentRequestingSecrets");
         GetSecretValueResponse response= clientV2.getSecretValue(secretExists);
-        assertEquals("arn:aws:secretsmanager:us-east-1:999936977227:secret:randomSecret-74lYJh", response.getSecretId());
+        assertEquals("arn:aws:secretsmanager:us-east-1:999936977227:secret:Secret1-74lYJh", response.getSecretId());
         assertEquals(VERSION_ID, response.getVersionId());
         assertTrue(response.getVersionStage().contains(CURRENT_LABEL));
         assertEquals("secretValue", response.getSecretValue().getSecretString());
@@ -207,12 +205,12 @@ public class SecretManagerServiceIntegTest extends BaseITCase {
         ignoreExceptionOfType(context, GetSecretException.class);
         software.amazon.awssdk.aws.greengrass.model.GetSecretValueRequest secretExists =
                 new software.amazon.awssdk.aws.greengrass.model.GetSecretValueRequest();
-        secretExists.setSecretId("randomSecret");
+        secretExists.setSecretId("Secret1");
         secretExists.setVersionId(VERSION_ID);
         GreengrassCoreIPCClientV2 clientV2 = IPCTestUtils.connectV2Client(kernel, "ComponentRequestingSecrets");
         // Secret exists in cache
         GetSecretValueResponse response= clientV2.getSecretValue(secretExists);
-        assertEquals("arn:aws:secretsmanager:us-east-1:999936977227:secret:randomSecret-74lYJh", response.getSecretId());
+        assertEquals("arn:aws:secretsmanager:us-east-1:999936977227:secret:Secret1-74lYJh", response.getSecretId());
         assertEquals(VERSION_ID, response.getVersionId());
         assertTrue(response.getVersionStage().contains(CURRENT_LABEL));
         assertEquals("secretValue", response.getSecretValue().getSecretString());
@@ -242,18 +240,18 @@ public class SecretManagerServiceIntegTest extends BaseITCase {
 
         // Then secrets still exist on disk
         FileSecretStore fs = kernel.getContext().get(FileSecretStore.class);
-        AWSSecretResponse res = fs.get("arn:aws:secretsmanager:us-east-1:999936977227:secret:randomSecret-74lYJh",
+        AWSSecretResponse res = fs.get("arn:aws:secretsmanager:us-east-1:999936977227:secret:Secret1-74lYJh",
                 CURRENT_LABEL);
-        assertEquals("arn:aws:secretsmanager:us-east-1:999936977227:secret:randomSecret-74lYJh",res.getArn());
+        assertEquals("arn:aws:secretsmanager:us-east-1:999936977227:secret:Secret1-74lYJh",res.getArn());
         // The secret is not present in cache
         assertThrows(ResourceNotFoundError.class, ()->clientV2.getSecretValue(secretExists));
 
         // Make security service available without secret manager restart
         URI privateKey = getClass().getResource("privateKey.pem").toURI();
         lenient().doReturn(EncryptionUtils.loadPrivateKeyPair(Paths.get(privateKey))).when(mockSecurityService).getKeyPair(any(), any());
-        res = fs.get("arn:aws:secretsmanager:us-east-1:999936977227:secret:randomSecret-74lYJh",
+        res = fs.get("arn:aws:secretsmanager:us-east-1:999936977227:secret:Secret1-74lYJh",
                 CURRENT_LABEL);
-        assertEquals("arn:aws:secretsmanager:us-east-1:999936977227:secret:randomSecret-74lYJh",res.getArn());
+        assertEquals("arn:aws:secretsmanager:us-east-1:999936977227:secret:Secret1-74lYJh",res.getArn());
         response = clientV2.getSecretValue(secretExists);
         // secret is loaded into cache
         assertEquals("secretValue", response.getSecretValue().getSecretString());
@@ -269,12 +267,12 @@ public class SecretManagerServiceIntegTest extends BaseITCase {
         kernel.getConfig().lookup(SYSTEM_NAMESPACE_KEY, DEVICE_PARAM_PRIVATE_KEY_PATH).withValue("someKey.pem");
         software.amazon.awssdk.aws.greengrass.model.GetSecretValueRequest secretExists =
                 new software.amazon.awssdk.aws.greengrass.model.GetSecretValueRequest();
-        secretExists.setSecretId("randomSecret");
+        secretExists.setSecretId("Secret1");
         secretExists.setVersionId(null);
         secretExists.setRefresh(true);
         GreengrassCoreIPCClientV2 clientV2 = IPCTestUtils.connectV2Client(kernel, "ComponentRequestingSecrets");
         GetSecretValueResponse response= clientV2.getSecretValue(secretExists);
-        assertEquals("arn:aws:secretsmanager:us-east-1:999936977227:secret:randomSecret-74lYJh", response.getSecretId());
+        assertEquals("arn:aws:secretsmanager:us-east-1:999936977227:secret:Secret1-74lYJh", response.getSecretId());
         assertEquals(VERSION_ID, response.getVersionId());
         assertTrue(response.getVersionStage().contains(CURRENT_LABEL));
         assertEquals("secretValue", response.getSecretValue().getSecretString());
@@ -285,12 +283,12 @@ public class SecretManagerServiceIntegTest extends BaseITCase {
         startKernelWithConfig("config.yaml", State.RUNNING);
         software.amazon.awssdk.aws.greengrass.model.GetSecretValueRequest secretExists =
                 new software.amazon.awssdk.aws.greengrass.model.GetSecretValueRequest();
-        secretExists.setSecretId("randomSecret");
+        secretExists.setSecretId("Secret1");
         secretExists.setVersionId(VERSION_ID);
 
         GreengrassCoreIPCClientV2 clientV2 = IPCTestUtils.connectV2Client(kernel, "ComponentRequestingSecrets");
         GetSecretValueResponse response= clientV2.getSecretValue(secretExists);
-        assertEquals("arn:aws:secretsmanager:us-east-1:999936977227:secret:randomSecret-74lYJh", response.getSecretId());
+        assertEquals("arn:aws:secretsmanager:us-east-1:999936977227:secret:Secret1-74lYJh", response.getSecretId());
         assertEquals(VERSION_ID, response.getVersionId());
         assertTrue(response.getVersionStage().contains(CURRENT_LABEL));
         assertEquals("secretValue", response.getSecretValue().getSecretString());
@@ -315,16 +313,16 @@ public class SecretManagerServiceIntegTest extends BaseITCase {
     @Test
     void GIVEN_secret_service_WHEN_periodic_refresh_THEN_secret_updated() throws Exception {
         startKernelWithConfig("config_refresh.yaml", State.RUNNING);
-        String arn = "arn:aws:secretsmanager:us-east-1:999936977227:secret:randomSecret-74lYJh";
+        String arn = "arn:aws:secretsmanager:us-east-1:999936977227:secret:Secret1-74lYJh";
         // This will be invoked during periodic refresh.
         lenient().doReturn(software.amazon.awssdk.services.secretsmanager.model.GetSecretValueResponse.builder()
-                        .name("randomSecret").arn(arn).secretString("updatedSecretValue").versionId("updatedVersionId")
+                        .name("Secret1").arn(arn).secretString("updatedSecretValue").versionId("updatedVersionId")
                         .versionStages( CURRENT_LABEL).createdDate(Instant.now().minusSeconds(1000000)).build())
                 .when(secretClient).getSecret(GetSecretValueRequest.builder().secretId(arn).versionStage(CURRENT_LABEL).build());
 
         software.amazon.awssdk.aws.greengrass.model.GetSecretValueRequest secretExists =
                 new software.amazon.awssdk.aws.greengrass.model.GetSecretValueRequest();
-        secretExists.setSecretId("randomSecret");
+        secretExists.setSecretId("Secret1");
         secretExists.setVersionStage(CURRENT_LABEL);
 
         GreengrassCoreIPCClientV2 clientV2 = IPCTestUtils.connectV2Client(kernel, "ComponentRequestingSecrets");
@@ -343,17 +341,17 @@ public class SecretManagerServiceIntegTest extends BaseITCase {
     @Test
     void GIVEN_secret_service_WHEN_ipc_request_with_refresh_THEN_fetch_from_cloud() throws Exception {
         startKernelWithConfig("config.yaml", State.RUNNING);
-        String arn = "arn:aws:secretsmanager:us-east-1:999936977227:secret:randomSecret-74lYJh";
+        String arn = "arn:aws:secretsmanager:us-east-1:999936977227:secret:Secret1-74lYJh";
         // New secret exists on cloud.
         lenient().doReturn(software.amazon.awssdk.services.secretsmanager.model.GetSecretValueResponse.builder()
-                        .name("randomSecret").arn(arn).secretString("updatedSecretValue").versionId("updatedVersionId")
+                        .name("Secret1").arn(arn).secretString("updatedSecretValue").versionId("updatedVersionId")
                         .versionStages("new").createdDate(Instant.now().minusSeconds(1000000)).build())
                 .when(secretClient).getSecret(GetSecretValueRequest.builder().secretId(arn).versionStage("new").build());
 
         GreengrassCoreIPCClientV2 clientV2 = IPCTestUtils.connectV2Client(kernel, "ComponentRequestingSecrets");
         software.amazon.awssdk.aws.greengrass.model.GetSecretValueRequest getSecret =
                 new software.amazon.awssdk.aws.greengrass.model.GetSecretValueRequest();
-        getSecret.setSecretId("randomSecret");
+        getSecret.setSecretId("Secret1");
         getSecret.setVersionStage("new");
         // IPC request without refresh
         GetSecretValueResponse response= clientV2.getSecretValue(getSecret);
@@ -373,7 +371,7 @@ public class SecretManagerServiceIntegTest extends BaseITCase {
     void GIVEN_secret_service_with_invalid_cloud_queue_size_WHEN_ipc_request_THEN_use_default_size() throws Exception {
         LogConfig.getRootLogConfig().setLevel(Level.DEBUG);
         startKernelWithConfig("config.yaml", State.RUNNING);
-        String arn = "arn:aws:secretsmanager:us-east-1:999936977227:secret:randomSecret-74lYJh";
+        String arn = "arn:aws:secretsmanager:us-east-1:999936977227:secret:Secret1-74lYJh";
         int noOfCloudCalls = 130;
         kernel.getConfig().lookupTopics("services", SecretManagerService.SECRET_MANAGER_SERVICE_NAME,
                 CONFIGURATION_CONFIG_KEY, PERFORMANCE_TOPIC).lookup(CLOUD_REQUEST_QUEUE_SIZE_TOPIC).withValue(0);
@@ -381,7 +379,7 @@ public class SecretManagerServiceIntegTest extends BaseITCase {
         lenient().doAnswer((i)-> {
             responseLatch.countDown();
             return software.amazon.awssdk.services.secretsmanager.model.GetSecretValueResponse.builder()
-                            .name("randomSecret").arn(arn).secretString("updatedSecretValue").versionId("updatedVersionId")
+                            .name("Secret1").arn(arn).secretString("updatedSecretValue").versionId("updatedVersionId")
                             .versionStages("new").createdDate(Instant.now().minusSeconds(1000000)).build();
                 })
                 .when(secretClient).getSecret(GetSecretValueRequest.builder().secretId(arn).versionStage("new").build());
@@ -398,7 +396,7 @@ public class SecretManagerServiceIntegTest extends BaseITCase {
             CompletableFuture.supplyAsync(()->{
                 software.amazon.awssdk.aws.greengrass.model.GetSecretValueRequest getSecret =
                         new software.amazon.awssdk.aws.greengrass.model.GetSecretValueRequest();
-                getSecret.setSecretId("randomSecret");
+                getSecret.setSecretId("Secret1");
                 getSecret.setVersionStage("new");
                 getSecret.setRefresh(true);
                 GetSecretValueResponse response= null;
@@ -426,7 +424,7 @@ public class SecretManagerServiceIntegTest extends BaseITCase {
     void GIVEN_secret_service_WHEN_ipc_request_with_refresh_fails_THEN_fetch_from_cache(ExtensionContext context) throws Exception {
         ignoreExceptionOfType(context, SecretManagerException.class);
         startKernelWithConfig("config.yaml", State.RUNNING);
-        String arn = "arn:aws:secretsmanager:us-east-1:999936977227:secret:randomSecret-74lYJh";
+        String arn = "arn:aws:secretsmanager:us-east-1:999936977227:secret:Secret1-74lYJh";
         // New secret exists on cloud.
         lenient().doThrow(SecretManagerException.class).when(secretClient).getSecret(GetSecretValueRequest.builder().secretId(arn).versionStage(
                 "new").build());
@@ -434,7 +432,7 @@ public class SecretManagerServiceIntegTest extends BaseITCase {
         GreengrassCoreIPCClientV2 clientV2 = IPCTestUtils.connectV2Client(kernel, "ComponentRequestingSecrets");
         software.amazon.awssdk.aws.greengrass.model.GetSecretValueRequest getSecret =
                 new software.amazon.awssdk.aws.greengrass.model.GetSecretValueRequest();
-        getSecret.setSecretId("randomSecret");
+        getSecret.setSecretId("Secret1");
         getSecret.setVersionStage("new");
         // IPC request without refresh
         GetSecretValueResponse response= clientV2.getSecretValue(getSecret);
@@ -455,7 +453,7 @@ public class SecretManagerServiceIntegTest extends BaseITCase {
         startKernelWithConfig("config.yaml", State.RUNNING);
         software.amazon.awssdk.aws.greengrass.model.GetSecretValueRequest req =
                 new software.amazon.awssdk.aws.greengrass.model.GetSecretValueRequest();
-        req.setSecretId("randomSecret");
+        req.setSecretId("Secret1");
         req.setVersionId(VERSION_ID);
 
         GreengrassCoreIPCClientV2 clientV2 = IPCTestUtils.connectV2Client(kernel, "ComponentWithNoAccessPolicy");
