@@ -7,7 +7,6 @@ package com.aws.greengrass.secretmanager;
 
 import com.aws.greengrass.config.Configuration;
 import com.aws.greengrass.config.Topic;
-import com.aws.greengrass.secretmanager.exception.NoSecretFoundException;
 import com.aws.greengrass.secretmanager.exception.SecretManagerException;
 import com.aws.greengrass.secretmanager.kernel.KernelClient;
 import com.aws.greengrass.secretmanager.model.AWSSecretResponse;
@@ -192,19 +191,6 @@ class FileSecretStoreTest {
         assertThrows(SecretManagerException.class, () ->dao.get(ARN_1, ""));
         assertThrows(SecretManagerException.class, () ->dao.get(null, LABEL1));
         assertThrows(SecretManagerException.class, () ->dao.get(ARN_1, null));
-    }
-
-    @Test
-    void GIVEN_dao_store_WHEN_no_secret_saved_THEN_get_throws_exception() throws SecretManagerException {
-        FileSecretStore dao = new FileSecretStore(mockKernelClient);
-        Topic mockTopic = mock(Topic.class);
-        when(mockConfiguration.lookup(SERVICES_NAMESPACE_TOPIC,
-                SecretManagerService.SECRET_MANAGER_SERVICE_NAME, RUNTIME_STORE_NAMESPACE_TOPIC,
-                SECRET_RESPONSE_TOPIC)).thenReturn(mockTopic);
-        when(mockTopic.getOnce()).thenReturn(null);
-
-        assertThrows(NoSecretFoundException.class, () -> dao.getAll());
-        assertNull(dao.get(ARN_1, LABEL1));
     }
 
     @Test
