@@ -206,9 +206,9 @@ public class SecretManager {
         String versionLabel = Utils.isEmpty(versionStage) ? LATEST_LABEL : versionStage;
         List<SecretConfiguration> configurations = getSecretConfiguration();
         boolean isSecretLabelConfigured = configurations.stream().anyMatch(
-                (secret) -> secret.getArn().equalsIgnoreCase(arn) && secret.getLabels().contains(versionStage));
+                (secret) -> arn.contains(secret.getArn()) && secret.getLabels().contains(versionStage));
         // If the requested secret is not  configured, then do not download.
-        if (!Utils.isEmpty(versionStage) && !isSecretLabelConfigured) {
+        if (!isSecretLabelConfigured) {
             logger.atWarn().kv("secret", arn).kv("versionStage", versionStage).log("Not downloading the secret from "
                     + "cloud as it is not configured.");
             return;
@@ -259,7 +259,6 @@ public class SecretManager {
                                              boolean refreshSecret) throws GetSecretException {
         logger.atDebug().kv("secretId", secretId).kv("versionId", versionId).kv("versionStage", versionStage)
                 .log("get-secret");
-        String arn = validateSecretId(secretId);
 
         // Both are optional
         if (!Utils.isEmpty(versionId) && !Utils.isEmpty(versionStage)) {
@@ -272,10 +271,12 @@ public class SecretManager {
           well. Refresh secrets by label only. If refreshing the secret fails for any reason, we fall back to local
           store.
          */
-        if (refreshSecret && Utils.isEmpty(versionId)) {
-            refreshSecretFromCloud(arn, versionStage);
-        }
+        String arn =  secretId;
         try {
+             arn = validateSecretId(secretId);
+            if (refreshSecret && Utils.isEmpty(versionId)) {
+                refreshSecretFromCloud(arn, versionStage);
+            }
             return getSecretFromCache(secretId, arn, versionId, versionStage);
         } catch (GetSecretException ex) {
             if (ex.getStatus() == 404 && Utils.isEmpty(versionId)) {
@@ -283,9 +284,11 @@ public class SecretManager {
                 logger.atDebug().kv("secretId", secretId).kv("label", versionStage).kv("version", versionId)
                         .log("Secret not found on disk. Trying to fetch from cloud");
                 refreshSecretFromCloud(arn, versionStage);
+            } else {
+                throw ex;
             }
-            return getSecretFromCache(secretId, arn, versionId, versionStage);
         }
+        return getSecretFromCache(secretId, arn, versionId, versionStage);
     }
 
     /**
@@ -351,7 +354,7 @@ public class SecretManager {
         if (isNotAnArn) {
             arn = nameToArnMap.get(secretId);
         }
-        if (arn == null || !cache.containsKey(arn)) {
+        if (Utils.isEmpty(arn) || !cache.containsKey(arn)) {
             throw new GetSecretException(404, secretNotFoundErr + secretId);
         }
         return arn;

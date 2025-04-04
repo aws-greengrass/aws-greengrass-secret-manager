@@ -346,7 +346,6 @@ class SecretManagerTest {
         request.setSecretId(SECRET_NAME_1);
         request.setRefresh(true);
 
-        when(mockAWSSecretClient.getSecret(any())).thenThrow(SecretManagerException.class);
         software.amazon.awssdk.aws.greengrass.model.GetSecretValueResponse response = sm.getSecret(request);
 
         assertArrayEquals(SECRET_VALUE_BINARY_1, response.getSecretValue().getSecretBinary());
