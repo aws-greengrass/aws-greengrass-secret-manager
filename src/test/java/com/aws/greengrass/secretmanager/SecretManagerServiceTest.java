@@ -251,6 +251,7 @@ public class SecretManagerServiceTest {
         assertEquals("Generic Error", parsedResponse.getMessage());
 
         // Now invalid secretId
+        reset(mockSecretManager);
         when(mockSecretManager.validateSecretId(SECRET_ID)).thenThrow(new GetSecretException(400, "getSecret Error"));
         getSecretResponse = kernel.getContext().get(SecretManagerService.class).getSecret(serviceName, byteRequest);
         parsedResponse = convertError(getSecretResponse);
