@@ -207,10 +207,14 @@ public class SecretManagerService extends PluginService {
             com.aws.greengrass.secretmanager.model.v1.GetSecretValueRequest getSecretValueRequest =
                     OBJECT_MAPPER.readValue(request,
                             com.aws.greengrass.secretmanager.model.v1.GetSecretValueRequest.class);
-            secretManagerIPCAgent.validateSecretIdAndDoAuthorization(GET_SECRET_VALUE, serviceName,
+            boolean isSecretValidated = secretManagerIPCAgent.validateSecretIdAndDoAuthorization(GET_SECRET_VALUE,
+                    serviceName,
                     getSecretValueRequest.getSecretId());
             GetSecretValueResult response = secretManager.getSecret(getSecretValueRequest);
-
+            if (!isSecretValidated) {
+                secretManagerIPCAgent.validateSecretIdAndDoAuthorization(GET_SECRET_VALUE, serviceName,
+                        response.getArn());
+            }
             try {
                 return OBJECT_MAPPER.writeValueAsBytes(response);
             } catch (JsonProcessingException e) {
