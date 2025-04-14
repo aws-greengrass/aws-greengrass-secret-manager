@@ -97,21 +97,14 @@ public class SecretManagerIPCAgent {
      * @param opCode operation
      * @param serviceName the component using this API
      * @param secretId the name of the secret
-     * @return true if the component is authorized to operate on the secret. False if it cannot be determined
      *
      * @throws AuthorizationException If the secret is not authorized to be used by the component
+     * @throws GetSecretException If the secret is not configured in Secret Manager
      */
-    public boolean validateSecretIdAndDoAuthorization(String opCode, String serviceName, String secretId)
-            throws AuthorizationException {
-        try {
-            String arn = secretManager.validateSecretId(secretId);
-            doAuthorization(opCode, serviceName, arn);
-            return true;
-        } catch (GetSecretException e) {
-            logger.atDebug().kv("secret", secretId).kv("principal", serviceName).log("Could not validate the secret "
-                    + "access as it is not found in the cache");
-            return false;
-        }
+    public void validateSecretIdAndDoAuthorization(String opCode, String serviceName, String secretId)
+            throws AuthorizationException, GetSecretException {
+        String arn = secretManager.validateSecretId(secretId);
+        doAuthorization(opCode, serviceName, arn);
     }
 
     private void doAuthorization(String opCode, String serviceName, String secretId) throws AuthorizationException {
@@ -136,15 +129,11 @@ public class SecretManagerIPCAgent {
         public GetSecretValueResponse handleRequest(GetSecretValueRequest request) {
             logger.atDebug().log("ipc-get-secret-request");
             try {
-                logger.atInfo().event("secret-access").kv("Principal", serviceName).kv("secret", request.getSecretId())
+                logger.atInfo().event("secret-access").kv("Principal", serviceName)
+                        .kv("secret", request.getSecretId())
                         .log("requested secret");
-                boolean isSecretValidated = validateSecretIdAndDoAuthorization(GET_SECRET_VALUE, serviceName,
-                        request.getSecretId());
-                GetSecretValueResponse response = secretManager.getSecret(request);
-                if (!isSecretValidated) {
-                    validateSecretIdAndDoAuthorization(GET_SECRET_VALUE, serviceName, request.getSecretId());
-                }
-                return response;
+                validateSecretIdAndDoAuthorization(GET_SECRET_VALUE, serviceName, request.getSecretId());
+                return secretManager.getSecret(request);
             } catch (AuthorizationException e) {
                 throw new UnauthorizedError(e.getMessage());
             } catch (GetSecretException e) {
