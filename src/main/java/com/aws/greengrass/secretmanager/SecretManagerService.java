@@ -201,16 +201,16 @@ public class SecretManagerService extends PluginService {
                 .log("requested secret");
 
         int status;
-        String message = null;
+        String message;
 
         try {
             com.aws.greengrass.secretmanager.model.v1.GetSecretValueRequest getSecretValueRequest =
                     OBJECT_MAPPER.readValue(request,
                             com.aws.greengrass.secretmanager.model.v1.GetSecretValueRequest.class);
-            secretManagerIPCAgent.validateSecretIdAndDoAuthorization(GET_SECRET_VALUE, serviceName,
+            secretManagerIPCAgent.validateSecretIdAndDoAuthorization(GET_SECRET_VALUE,
+                    serviceName,
                     getSecretValueRequest.getSecretId());
             GetSecretValueResult response = secretManager.getSecret(getSecretValueRequest);
-
             try {
                 return OBJECT_MAPPER.writeValueAsBytes(response);
             } catch (JsonProcessingException e) {
