@@ -36,6 +36,7 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
+import java.util.Optional;
 import java.util.regex.Pattern;
 import javax.inject.Inject;
 
@@ -54,6 +55,7 @@ public class SecretManager {
             "arn:([^:]+):secretsmanager:[a-z0-9\\-]+:[0-9]{12}:secret:([a-zA-Z0-9\\\\]+/)*"
                     + "[a-zA-Z0-9/_+=,.@\\-]+(-[a-zA-Z0-9]+)?";
     private static final String secretNotFoundErr = "Secret not found ";
+    private static final String secretNotConfiguredErr = "Secret not configured ";
     private static final String IPC_REQUEST_REFRESH_FIELD = "refresh";
     private final Logger logger = LogManager.getLogger(SecretManager.class);
     // Cache which holds aws secrets result
@@ -137,7 +139,7 @@ public class SecretManager {
 
             for (SecretConfiguration configuredSecret : secretConfiguration) {
                 String arn = configuredSecret.getArn();
-                if (!Pattern.matches(VALID_SECRET_ARN_PATTERN, arn)) {
+                if (!isSecretIdArn(arn)) {
                     logger.atWarn().kv("Secret ", arn).log("Skipping invalid secret arn configured");
                     continue;
                 }
@@ -183,7 +185,7 @@ public class SecretManager {
     */
     private void loadCache(AWSSecretResponse awsSecretResponse) {
         synchronized (cacheLockObject) {
-            GetSecretValueResponse decryptedResponse = null;
+            GetSecretValueResponse decryptedResponse;
             try {
                 decryptedResponse = localStoreMap.decrypt(awsSecretResponse);
             } catch (SecretCryptoException e) {
@@ -206,9 +208,9 @@ public class SecretManager {
         String versionLabel = Utils.isEmpty(versionStage) ? LATEST_LABEL : versionStage;
         List<SecretConfiguration> configurations = getSecretConfiguration();
         boolean isSecretLabelConfigured = configurations.stream().anyMatch(
-                (secret) -> secret.getArn().equalsIgnoreCase(arn) && secret.getLabels().contains(versionStage));
+                (secret) -> secret.getArn().contains(arn) && secret.getLabels().contains(versionStage));
         // If the requested secret is not  configured, then do not download.
-        if (!Utils.isEmpty(versionStage) && !isSecretLabelConfigured) {
+        if (!isSecretLabelConfigured) {
             logger.atWarn().kv("secret", arn).kv("versionStage", versionStage).log("Not downloading the secret from "
                     + "cloud as it is not configured.");
             return;
@@ -231,7 +233,7 @@ public class SecretManager {
     private GetSecretValueResponse getSecretFromCache(String secretId, String arn, String versionId,
                                                       String versionStage) throws GetSecretException {
         if (!Utils.isEmpty(versionId)) {
-            if (!cache.containsKey(arn + versionId)) {
+            if (!isSecretPresentInCache(arn + versionId)) {
                 String errorStr = "Version Id " + versionId + " not found for secret " + secretId;
                 logger.atError().kv("secretId", secretId).log(errorStr);
                 throw new GetSecretException(404, errorStr);
@@ -240,7 +242,7 @@ public class SecretManager {
         }
 
         if (!Utils.isEmpty(versionStage)) {
-            if (!cache.containsKey(arn + versionStage)) {
+            if (!isSecretPresentInCache(arn + versionStage)) {
                 String errorStr = "Version stage " + versionStage + " not found for secret " + secretId;
                 logger.atError().kv("secretId", secretId).log(errorStr);
                 throw new GetSecretException(404, errorStr);
@@ -248,7 +250,7 @@ public class SecretManager {
             return cache.get(arn + versionStage);
         }
         // If none of the label and version are specified then return LATEST_LABEL
-        if (!cache.containsKey((arn + LATEST_LABEL))) {
+        if (!isSecretPresentInCache((arn + LATEST_LABEL))) {
             logger.atError().kv("secretId", secretId).log(secretNotFoundErr);
             throw new GetSecretException(404, secretNotFoundErr + secretId);
         }
@@ -259,7 +261,6 @@ public class SecretManager {
                                              boolean refreshSecret) throws GetSecretException {
         logger.atDebug().kv("secretId", secretId).kv("versionId", versionId).kv("versionStage", versionStage)
                 .log("get-secret");
-        String arn = validateSecretId(secretId);
 
         // Both are optional
         if (!Utils.isEmpty(versionId) && !Utils.isEmpty(versionStage)) {
@@ -267,15 +268,18 @@ public class SecretManager {
                     .log("Both secret version and id are set");
             throw new GetSecretException(400, "Both versionId and Stage are set in the request");
         }
+
         /*
-         If refresh is set to true, try fetching the secret from cloud. This will update the local store and cache as
-          well. Refresh secrets by label only. If refreshing the secret fails for any reason, we fall back to local
-          store.
+        If refresh is set to true, try fetching the secret from cloud. This will update the local store and cache as
+        well. Refresh secrets by label only. If refreshing the secret fails for any reason, we fall back to local
+        store.
          */
-        if (refreshSecret && Utils.isEmpty(versionId)) {
-            refreshSecretFromCloud(arn, versionStage);
-        }
+        String arn =  secretId;
         try {
+            arn = validateSecretId(secretId);
+            if (refreshSecret && Utils.isEmpty(versionId)) {
+                refreshSecretFromCloud(arn, versionStage);
+            }
             return getSecretFromCache(secretId, arn, versionId, versionStage);
         } catch (GetSecretException ex) {
             if (ex.getStatus() == 404 && Utils.isEmpty(versionId)) {
@@ -283,9 +287,11 @@ public class SecretManager {
                 logger.atDebug().kv("secretId", secretId).kv("label", versionStage).kv("version", versionId)
                         .log("Secret not found on disk. Trying to fetch from cloud");
                 refreshSecretFromCloud(arn, versionStage);
+            } else {
+                throw ex;
             }
-            return getSecretFromCache(secretId, arn, versionId, versionStage);
         }
+        return getSecretFromCache(secretId, arn, versionId, versionStage);
     }
 
     /**
@@ -322,6 +328,10 @@ public class SecretManager {
             return translateModeltoIpc(secretResponse);
     }
 
+    private boolean isSecretPresentInCache(String arn) {
+        return cache.containsKey(arn);
+    }
+
     /**
      * Return secret arn given secretId. If secret name is provided, then return its mapped arn.
      *
@@ -333,26 +343,49 @@ public class SecretManager {
         if (Utils.isEmpty(secretId)) {
             throw new GetSecretException(400, "SecretId absent in the request");
         }
-        try {
-            return getArnFromCache(secretId);
-        } catch (GetSecretException e) {
+        String arn = getArnFromCache(secretId);
+        if (!isSecretPresentInCache(arn)) {
             try {
                 reloadCache();
-                return getArnFromCache(secretId); // throw GetSecretException if the secret doesn't exist
-            } catch (SecretManagerException ex) {
-                throw new GetSecretException(404, secretNotFoundErr + secretId);
+            } catch (SecretManagerException e) {
+                // TODO: Improve return code where device is offline and SM is unable to load cache from disk
+                logger.atWarn().setCause(e).log("Unable to load secrets from cache");
             }
         }
+        return arn;
     }
 
-    private String getArnFromCache(String secretId) throws GetSecretException {
+    private boolean isSecretIdArn(final String secretId) {
+        return Pattern.matches(VALID_SECRET_ARN_PATTERN, secretId);
+    }
+
+    private boolean doesSecretNameMatchWithConfiguredArn(String secretName, String secretArn) {
+        String regex = ".*:secret:" + Pattern.quote(secretName) + "-[A-Za-z0-9]{6}(?::[A-Za-z0-9/_+=.@-]+)?$";
+        Pattern pattern = Pattern.compile(regex);
+        return pattern.matcher(secretArn).matches();
+    }
+
+    // TODO: add validation for labels
+    private String getArnFromCache(final String secretId) throws GetSecretException {
         String arn = secretId;
-        boolean isNotAnArn = !Pattern.matches(VALID_SECRET_ARN_PATTERN, secretId);
-        if (isNotAnArn) {
+        if (!isSecretIdArn(secretId)) {
             arn = nameToArnMap.get(secretId);
         }
-        if (arn == null || !cache.containsKey(arn)) {
-            throw new GetSecretException(404, secretNotFoundErr + secretId);
+
+        /*
+        In case device was offline or security service was unavailable during the initial sync, nameToArnMap
+        is empty and if GetSecret IPC is invoked using a secret name with refresh, we fail.
+        Fix: try to lookup the secret ARN using the requested secret name in configured secrets.
+         */
+        if (Utils.isEmpty(arn)) {
+            List<SecretConfiguration> configurations = getSecretConfiguration();
+            Optional<SecretConfiguration> matchedSecretConfig = configurations.stream()
+                    .filter(config -> doesSecretNameMatchWithConfiguredArn(secretId, config.getArn()))
+                    .findFirst();
+            if (matchedSecretConfig.isPresent()) {
+                return matchedSecretConfig.get().getArn();
+            }
+            throw new GetSecretException(404, secretNotConfiguredErr + secretId);
         }
         return arn;
     }

@@ -90,6 +90,17 @@ public class SecretManagerIPCAgent {
         return new GetSecretValueOperationHandler(context);
     }
 
+    /**
+     * Validate the secret id and do authorization for the given operation.
+     * If the secret is not found in the cache, it should be fetched from cloud and then validated.
+     *
+     * @param opCode operation
+     * @param serviceName the component using this API
+     * @param secretId the name of the secret
+     *
+     * @throws AuthorizationException If the secret is not authorized to be used by the component
+     * @throws GetSecretException If the secret is not configured in Secret Manager
+     */
     public void validateSecretIdAndDoAuthorization(String opCode, String serviceName, String secretId)
             throws AuthorizationException, GetSecretException {
         String arn = secretManager.validateSecretId(secretId);
@@ -118,7 +129,8 @@ public class SecretManagerIPCAgent {
         public GetSecretValueResponse handleRequest(GetSecretValueRequest request) {
             logger.atDebug().log("ipc-get-secret-request");
             try {
-                logger.atInfo().event("secret-access").kv("Principal", serviceName).kv("secret", request.getSecretId())
+                logger.atInfo().event("secret-access").kv("Principal", serviceName)
+                        .kv("secret", request.getSecretId())
                         .log("requested secret");
                 validateSecretIdAndDoAuthorization(GET_SECRET_VALUE, serviceName, request.getSecretId());
                 return secretManager.getSecret(request);

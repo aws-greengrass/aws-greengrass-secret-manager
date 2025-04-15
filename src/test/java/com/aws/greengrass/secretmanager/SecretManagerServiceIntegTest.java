@@ -473,6 +473,6 @@ public class SecretManagerServiceIntegTest extends BaseITCase {
         GreengrassCoreIPCClientV2 clientV2 = IPCTestUtils.connectV2Client(kernel, "ComponentRequestingSecrets");
         ResourceNotFoundError err = assertThrows(ResourceNotFoundError.class,
                 () -> clientV2.getSecretValue(secretNotConfiguredReq));
-        assertThat(err.getMessage(), containsString("Secret not found secretNotConfigured"));
+        assertThat(err.getMessage(), containsString("Secret not configured secretNotConfigured"));
     }
 }

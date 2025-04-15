@@ -63,6 +63,7 @@ import static org.junit.jupiter.api.Assertions.assertArrayEquals;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.Mockito.doReturn;
@@ -346,7 +347,6 @@ class SecretManagerTest {
         request.setSecretId(SECRET_NAME_1);
         request.setRefresh(true);
 
-        when(mockAWSSecretClient.getSecret(any())).thenThrow(SecretManagerException.class);
         software.amazon.awssdk.aws.greengrass.model.GetSecretValueResponse response = sm.getSecret(request);
 
         assertArrayEquals(SECRET_VALUE_BINARY_1, response.getSecretValue().getSecretBinary());
@@ -846,6 +846,45 @@ class SecretManagerTest {
             assertEquals(404, response.getStatus());
             assertEquals("Version stage " + invalidLabel + " not found for secret " + SECRET_NAME_1,
                     response.getMessage());
+        }
+    }
+
+    @Test
+    void GIVEN_secret_manager_WHEN_validate_secret_with_friendly_name_THEN_proper_results_are_returned() throws Exception {
+        // GIVEN
+        loadMockSecrets();
+        String mockArn = "arn:aws:secretsmanager:us-east-1:999936977227:secret:Secret3-74lYJh";
+        when(mockDao.getAll()).thenReturn(SecretDocument.builder().secrets(new ArrayList<>(
+                Collections.singletonList(AWSSecretResponse.builder().name("Secret3")
+                        .arn(mockArn).versionId("mock-version-id")
+                        .versionStages(new ArrayList<>(Collections.singletonList("mock-version-stage"))).build())
+        )).build());
+        SecretManager sm = new SecretManager(mockAWSSecretClient, mockDao, mockKernelClient, localStoreMap);
+        String arn1 = sm.validateSecretId("Secret1");
+        assertEquals(arn1, ARN_1);
+
+        String arn2 = sm.validateSecretId(PARTIAL_ARN);
+        assertEquals(arn2, PARTIAL_ARN);
+
+        try {
+            sm.validateSecretId("Secret1-74lYJh");
+        } catch (Exception e) {
+            assertTrue(e instanceof GetSecretException);
+            GetSecretException getSecretException = (GetSecretException) e;
+            assertEquals(getSecretException.getStatus(), 404);
+            assertEquals(getSecretException.getMessage(), "Secret not configured Secret1-74lYJh");
+        }
+
+        String arn3 = sm.validateSecretId("Secret3");
+        assertEquals(arn3, mockArn);
+
+        try {
+            sm.validateSecretId("Secret4");
+        } catch (Exception e) {
+            assertTrue(e instanceof GetSecretException);
+            GetSecretException getSecretException = (GetSecretException) e;
+            assertEquals(getSecretException.getStatus(), 404);
+            assertEquals(getSecretException.getMessage(), "Secret not configured Secret4");
         }
     }
 }
