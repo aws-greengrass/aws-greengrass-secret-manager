@@ -210,7 +210,7 @@ public class SecretManager {
         boolean isSecretLabelConfigured = configurations.stream().anyMatch(
                 (secret) -> secret.getArn().contains(arn) && secret.getLabels().contains(versionStage));
         // If the requested secret is not  configured, then do not download.
-        if (!isSecretLabelConfigured) {
+        if (!Utils.isEmpty(versionStage) && !isSecretLabelConfigured) {
             logger.atWarn().kv("secret", arn).kv("versionStage", versionStage).log("Not downloading the secret from "
                     + "cloud as it is not configured.");
             return;
@@ -274,9 +274,8 @@ public class SecretManager {
         well. Refresh secrets by label only. If refreshing the secret fails for any reason, we fall back to local
         store.
          */
-        String arn =  secretId;
+        String arn = validateSecretId(secretId);
         try {
-            arn = validateSecretId(secretId);
             if (refreshSecret && Utils.isEmpty(versionId)) {
                 refreshSecretFromCloud(arn, versionStage);
             }

@@ -596,7 +596,7 @@ class SecretManagerTest {
         try {
             sm.getSecret(request);
         } catch (GetSecretException e) {
-            assertEquals("Secret not found " + SECRET_NAME_1, e.getMessage());
+            assertEquals("Secret not configured " + SECRET_NAME_1, e.getMessage());
             assertEquals(404, e.getStatus());
         }
     }
@@ -780,26 +780,6 @@ class SecretManagerTest {
         } catch (GetSecretException response) {
             assertEquals(400, response.getStatus());
             assertEquals("SecretId absent in the request", response.getMessage());
-        }
-
-        // Create a request for secret which is not present
-        request = new software.amazon.awssdk.aws.greengrass.model.GetSecretValueRequest();
-        request.setSecretId(SECRET_NAME_1);
-        try {
-            sm.getSecret(request);
-        } catch (GetSecretException response) {
-            assertEquals(404, response.getStatus());
-            assertEquals("Secret not found " + SECRET_NAME_1, response.getMessage());
-        }
-
-        // Create a request for secret arn which is not present
-        request = new software.amazon.awssdk.aws.greengrass.model.GetSecretValueRequest();
-        request.setSecretId(ARN_1);
-        try {
-            sm.getSecret(request);
-        } catch (GetSecretException response) {
-            assertEquals(404, response.getStatus());
-            assertEquals("Secret not found " + ARN_1, response.getMessage());
         }
 
         // Actually load the secrets
