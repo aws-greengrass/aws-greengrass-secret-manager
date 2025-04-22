@@ -16,6 +16,7 @@ import com.aws.greengrass.secretmanager.model.SecretDocument;
 import com.aws.greengrass.secretmanager.store.FileSecretStore;
 import com.aws.greengrass.secretmanager.store.SecretStore;
 import com.aws.greengrass.security.SecurityService;
+import com.aws.greengrass.security.exceptions.KeyLoadingException;
 import com.aws.greengrass.security.exceptions.ServiceUnavailableException;
 import com.aws.greengrass.util.Coerce;
 import com.aws.greengrass.util.RetryUtils;
@@ -83,22 +84,14 @@ public class LocalStoreMap {
         }
     }
 
-    private void loadCrypter() throws Exception {
-        try {
-            URI privateKeyUri = securityService.getDeviceIdentityPrivateKeyURI();
-            URI certUri = securityService.getDeviceIdentityCertificateURI();
-            KeyPair kp = RetryUtils.runWithRetry(
-                    RetryUtils.RetryConfig.builder().maxRetryInterval(Duration.ofSeconds(30))
-                            .initialRetryInterval(Duration.ofSeconds(10)).maxAttempt(10)
-                            .retryableExceptions(Collections.singletonList(ServiceUnavailableException.class)).build(),
-                    () -> securityService.getKeyPair(privateKeyUri, certUri), "get-keypair", logger);
-            MasterKey masterKey = RSAMasterKey.createInstance(kp.getPublic(), kp.getPrivate());
-            KeyChain keyChain = new KeyChain();
-            keyChain.addMasterKey(masterKey);
-            crypter.set(new Crypter(keyChain));
-        } catch (InterruptedException e) {
-            Thread.currentThread().interrupt();
-        }
+    private void loadCrypter() throws KeyLoadingException, ServiceUnavailableException, SecretCryptoException {
+        URI privateKeyUri = securityService.getDeviceIdentityPrivateKeyURI();
+        URI certUri = securityService.getDeviceIdentityCertificateURI();
+        KeyPair kp = securityService.getKeyPair(privateKeyUri, certUri);
+        MasterKey masterKey = RSAMasterKey.createInstance(kp.getPublic(), kp.getPrivate());
+        KeyChain keyChain = new KeyChain();
+        keyChain.addMasterKey(masterKey);
+        crypter.set(new Crypter(keyChain));
     }
 
     public void syncWithConfig(List<SecretConfiguration> secretConfiguration) {
