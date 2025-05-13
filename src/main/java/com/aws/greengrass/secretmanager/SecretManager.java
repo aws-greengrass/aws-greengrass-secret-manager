@@ -204,6 +204,12 @@ public class SecretManager {
         }
     }
 
+    /*
+    In case device is offline or device security service is unavailable, refreshSecretFromCloud will catch the
+    exception, log the error and continue. The expectation is that the device may come online or device security
+    service becomes available eventually. If refreshSecretFromCloud is being called in a loop then the loop should not
+    exit entirely.
+     */
     private void refreshSecretFromCloud(String arn, String versionStage) {
         String versionLabel = Utils.isEmpty(versionStage) ? LATEST_LABEL : versionStage;
         List<SecretConfiguration> configurations = getSecretConfiguration();
