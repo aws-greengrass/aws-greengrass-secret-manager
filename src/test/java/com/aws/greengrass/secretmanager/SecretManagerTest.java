@@ -136,7 +136,7 @@ class SecretManagerTest {
     @Captor
     ArgumentCaptor<software.amazon.awssdk.services.secretsmanager.model.GetSecretValueRequest> awsClientRequestCaptor;
 
-    private void loadMockSecrets() throws JsonProcessingException, UnsupportedInputTypeException {
+    private void loadMockSecrets() throws UnsupportedInputTypeException {
         SecretConfiguration secret1 = SecretConfiguration.builder().arn(ARN_1).build();
         SecretConfiguration secret2 = SecretConfiguration.builder().arn(ARN_2)
                 .labels(Arrays.asList(LATEST_LABEL, SECRET_LABEL_1)).build();
