@@ -268,6 +268,32 @@ class SecretManagerTest {
     }
 
     @Test
+    void GIVEN_secret_manager_WHEN_get_secret_request_with_unresponsive_crypter_THEN_secret_is_returned(ExtensionContext context) throws Exception {
+        // GIVEN
+        ignoreExceptionOfType(context, SecretCryptoException.class);
+
+        loadMockSecrets();
+        when(mockAWSSecretClient.getSecret(any())).thenReturn(getMockSecretAWithSecretString());
+        List<AWSSecretResponse> storedSecrets = new ArrayList<>();
+        storedSecrets.add(loadMockDaoSecretAWithSecretString());
+        when(mockDao.getAll())
+                .thenReturn(SecretDocument.builder().secrets(storedSecrets).build());
+        LocalStoreMap mockLocalStoreMap = mock(LocalStoreMap.class);
+        when(mockLocalStoreMap.decrypt(any(AWSSecretResponse.class))).thenThrow(new SecretCryptoException("Mock exception"));
+        SecretManager sm = new SecretManager(mockAWSSecretClient, mockDao, mockKernelClient, mockLocalStoreMap);
+
+        // WHEN
+        software.amazon.awssdk.aws.greengrass.model.GetSecretValueRequest request =
+                new software.amazon.awssdk.aws.greengrass.model.GetSecretValueRequest();
+        request.setSecretId(SECRET_NAME_1);
+        software.amazon.awssdk.aws.greengrass.model.GetSecretValueResponse response = sm.getSecret(request);
+
+        // THEN
+        assertEquals(SECRET_VALUE_1, response.getSecretValue().getSecretString());
+        assertNull(response.getSecretValue().getSecretBinary());
+    }
+
+    @Test
     void GIVEN_cloud_secret_WHEN_binary_secret_set_THEN_only_binary_returned() throws Exception {
         loadMockSecrets();
         when(mockAWSSecretClient.getSecret(any()))
