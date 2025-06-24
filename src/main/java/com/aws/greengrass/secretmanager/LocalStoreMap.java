@@ -166,8 +166,7 @@ public class LocalStoreMap {
      * @return true if the secret is updated in the local store, false otherwise.
      * @throws SecretCryptoException when encryption fails
      */
-    public boolean updateWithSecret(GetSecretValueResponse result, List<SecretConfiguration> secretConfiguration)
-            throws SecretCryptoException {
+    public boolean updateWithSecret(GetSecretValueResponse result, List<SecretConfiguration> secretConfiguration) {
         Labels labels = secrets.get(result.arn());
         boolean isSecretInStore = labels != null && labels.responseMap != null;
         // If the downloaded secret doesn't exist in the store, then update the store with that secret
@@ -183,8 +182,12 @@ public class LocalStoreMap {
                             return response == null || !response.getVersionId().equals(result.versionId());
                         });
         if (shouldUpdateSecretInStore) {
-            AWSSecretResponse secretResponse = encryptAWSResponse(result);
-            return updateWithSecret(secretResponse, secretConfiguration);
+            try {
+                AWSSecretResponse secretResponse = encryptAWSResponse(result);
+                return updateWithSecret(secretResponse, secretConfiguration);
+            } catch (SecretCryptoException e) {
+                logger.atWarn().setCause(e).log("Unable to encrypt secret, skip saving to disk");
+            }
         }
         return false;
     }

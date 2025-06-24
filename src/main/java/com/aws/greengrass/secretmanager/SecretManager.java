@@ -194,13 +194,7 @@ public class SecretManager {
                         + "skip loading in cache");
                 return;
             }
-            String secretArn = decryptedResponse.arn();
-            cache.put(secretArn, decryptedResponse);
-            cache.put(secretArn + decryptedResponse.versionId(), decryptedResponse);
-            // load all labels attached with this version of secret
-            for (String label : decryptedResponse.versionStages()) {
-                cache.put(secretArn + label, decryptedResponse);
-            }
+            putSecretInCache(decryptedResponse.arn(), decryptedResponse.versionId(), decryptedResponse);
         }
     }
 
@@ -226,14 +220,29 @@ public class SecretManager {
         try {
             GetSecretValueResponse response = secretClient.getSecret(request);
             logger.atDebug().kv("secret", arn).kv("versionStage", versionStage).log("Downloaded secret from cloud");
-            if (localStoreMap.updateWithSecret(response, getSecretConfiguration())) {
-                // Reload cache with every secret update
-                reloadCache();
-            }
-        } catch (SecretCryptoException | SecretManagerException  e) {
+            localStoreMap.updateWithSecret(response, getSecretConfiguration());
+            /*
+            Always update the in-memory cache as saving to disk may fail due to a slow TPM but that should not fail
+            a get secret IPC request
+             */
+            this.nameToArnMap.put(response.name(), response.arn());
+            this.putSecretInCache(response);
+        } catch (SecretManagerException e) {
             logger.atError().kv("secret", arn).kv("versionStage", versionStage).cause(e)
                     .log("Unable to refresh secret from cloud. Local store will not be updated");
         }
+    }
+
+    private void putSecretInCache(String secretArn, String versionId, GetSecretValueResponse secret) {
+        cache.put(secretArn, secret);
+        cache.put(secretArn + versionId, secret);
+        for (String label : secret.versionStages()) {
+            cache.put(secretArn + label, secret);
+        }
+    }
+
+    private void putSecretInCache(GetSecretValueResponse secret) {
+        putSecretInCache(secret.arn(), secret.versionId(), secret);
     }
 
     private GetSecretValueResponse getSecretFromCache(String secretId, String arn, String versionId,
