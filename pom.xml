@@ -261,18 +261,17 @@
         <dependency>
             <groupId>com.amazonaws</groupId>
             <artifactId>aws-encryption-sdk-java</artifactId>
-            <version>2.2.0</version>
+            <version>3.0.2</version>
         </dependency>
-        <!-- https://mvnrepository.com/artifact/org.bouncycastle/bcprov-jdk15on -->
         <dependency>
             <groupId>org.bouncycastle</groupId>
-            <artifactId>bcpkix-jdk15on</artifactId>
-            <version>1.68</version>
+            <artifactId>bcpkix-jdk18on</artifactId>
+            <version>1.80</version>
         </dependency>
         <dependency>
             <groupId>org.projectlombok</groupId>
             <artifactId>lombok</artifactId>
-            <version>1.18.10</version>
+            <version>1.18.30</version>
             <scope>provided</scope>
         </dependency>
         <!-- https://mvnrepository.com/artifact/software.amazon.awssdk/secretsmanager -->
