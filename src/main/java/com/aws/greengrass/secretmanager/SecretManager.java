@@ -160,18 +160,65 @@ public class SecretManager {
      */
     public void reloadCache() throws SecretManagerException {
         synchronized (cacheLockObject) {
+            clearCache();
+            logger.atDebug("load-secret-local-store").log();
+            loadAllSecretsFromLocalStore();
+        }
+    }
+
+
+    /**
+     * Load a single secret's entries from the local store into the in-memory cache, decrypting only that secret
+     * instead of reloading and decrypting the entire store. Best-effort: a missing entry or decrypt failure leaves
+     * the cache unchanged and the caller falls through to its normal not-found handling. Only the requested arn is
+     * touched, so existing cache entries for other secrets are preserved (no full clear).
+     *
+     * @param arn arn of the secret to load
+     * @throws SecretManagerException secret manager exception
+     */
+    private void loadSecretFromLocalStore(String arn) throws SecretManagerException {
+        synchronized (cacheLockObject) {
+            List<AWSSecretResponse> secrets = secretStore.getAll().getSecrets();
+            if (Utils.isEmpty(secrets) || Utils.isEmpty(arn)) {
+                return;
+            }
+            for (AWSSecretResponse secretResult : secrets) {
+                if (!isArnMatch(secretResult.getArn(), arn)) {
+                    continue;
+                }
+                // Do not break: a single arn can have multiple stored records (one per label/version),
+                // and all of them must be loaded so every cache key for the secret is populated.
+                loadCache(secretResult);
+            }
+        }
+    }
+
+    private void loadAllSecretsFromLocalStore() throws SecretManagerException {
+        synchronized (cacheLockObject) {
+            List<AWSSecretResponse> secrets = secretStore.getAll().getSecrets();
+            if (Utils.isEmpty(secrets)) {
+                return;
+            }
+            for (AWSSecretResponse secretResult : secrets) {
+                loadCache(secretResult);
+            }
+        }
+    }
+
+    /*
+     * Match a stored secret's full ARN against a requested secret id. A requested id is a match when it is the
+     * full ARN, or a partial ARN: the full ARN minus the trailing "-<6 chars>" suffix that Secrets Manager appends.
+     * The "-" guard prevents a partial ARN from matching a longer, unrelated secret name with the same prefix.
+     */
+    private boolean isArnMatch(String storedArn, String requestedArn) {
+        return storedArn.equals(requestedArn) || storedArn.startsWith(requestedArn + "-");
+    }
+
+    private void clearCache() {
+        synchronized (cacheLockObject) {
             logger.atDebug("clear-local-secret-cache").log();
             nameToArnMap.clear();
             cache.clear();
-            logger.atDebug("load-secret-local-store").log();
-            // read the db
-            List<AWSSecretResponse> secrets = secretStore.getAll().getSecrets();
-            if (!Utils.isEmpty(secrets)) {
-                for (AWSSecretResponse secretResult : secrets) {
-                    nameToArnMap.put(secretResult.getName(), secretResult.getArn());
-                    loadCache(secretResult);
-                }
-            }
         }
     }
 
@@ -185,6 +232,7 @@ public class SecretManager {
     */
     private void loadCache(AWSSecretResponse awsSecretResponse) {
         synchronized (cacheLockObject) {
+            nameToArnMap.put(awsSecretResponse.getName(), awsSecretResponse.getArn());
             GetSecretValueResponse decryptedResponse;
             try {
                 decryptedResponse = localStoreMap.decrypt(awsSecretResponse);
@@ -360,9 +408,8 @@ public class SecretManager {
         String arn = getArnFromCache(secretId);
         if (!isSecretPresentInCache(arn)) {
             try {
-                reloadCache();
+                loadSecretFromLocalStore(arn);
             } catch (SecretManagerException e) {
-                // TODO: Improve return code where device is offline and SM is unable to load cache from disk
                 logger.atWarn().setCause(e).log("Unable to load secrets from cache");
             }
         }
