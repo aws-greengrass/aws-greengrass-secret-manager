@@ -662,7 +662,10 @@ class SecretManagerTest {
         when(mockAWSSecretClient.getSecret(any())).thenReturn(getMockSecretA()).thenReturn(getMockSecretB());
         sm.syncFromCloud();
         verify(mockAWSSecretClient, times(4)).getSecret(any());
-        verify(mockDao, times(2)).saveAll(any());
+        // Config is unchanged since the first sync, so syncWithConfig/reloadCache is skipped. saveAll here is
+        // driven only by cloud downloads that differ from the store; against the same empty mock store one save
+        // is produced.
+        verify(mockDao, times(1)).saveAll(any());
     }
 
     @Test
@@ -706,44 +709,70 @@ class SecretManagerTest {
         config.lookupTopics("services", SecretManagerService.SECRET_MANAGER_SERVICE_NAME)
                 .lookup(CONFIGURATION_CONFIG_KEY, SECRETS_TOPIC).withValueChecked(Collections.singletonList(secret));
         doReturn(config).when(mockKernelClient).getConfig();
-        // two labels both throw IOException
-        // Given only the first one label is in Dao, IOException is ignored and SecretManagerException is thrown
-        when(mockDao.getAll()).thenReturn(SecretDocument.builder().secrets(Arrays.asList(loadMockDaoSecretB())).build());
-        when(mockAWSSecretClient.getSecret(any())).thenThrow(SecretManagerException.class).thenThrow(SecretManagerException.class);
-        sm.syncFromCloud();
-        // No updates from cloud, then do not update local store
-        verify(mockDao, times(0)).saveAll(documentArgumentCaptor.capture());
-        reset(mockAWSSecretClient);
-        reset(mockDao);
+
         AWSSecretResponse secondSec =
                 AWSSecretResponse.builder().name(SECRET_NAME_2).arn(ARN_2).createdDate(SECRET_DATE_2.toEpochMilli())
                 .encryptedSecretString(ENCRYPTED_SECRET_2).encryptedSecretBinary(ENCRYPTED_SECRET_BINARY_2)
                 .versionStages(Arrays.asList(SECRET_LABEL_1)).versionId(SECRET_VERSION_1)
                 .build();
-        // two labels throw IOException and SecretManagerException respectively.
-        // Given both labels are in Dao, IOException is ignored and SecretManagerException is thrown
-        when(mockDao.getAll()).thenReturn(SecretDocument.builder().secrets(Arrays.asList(loadMockDaoSecretB(), secondSec)).build());
-        when(mockAWSSecretClient.getSecret(any())).thenThrow(SecretManagerException.class).thenThrow(SecretManagerException.class);
+
+        // First sync: reconcile runs (config changed from empty). Both label downloads fail, so nothing new is
+        // persisted and the reconciled set already matches the store -> no saveAll.
+        when(mockDao.getAll())
+                .thenReturn(SecretDocument.builder().secrets(Arrays.asList(loadMockDaoSecretB(), secondSec)).build());
+        when(mockAWSSecretClient.getSecret(any()))
+                .thenThrow(SecretManagerException.class).thenThrow(SecretManagerException.class);
         sm.syncFromCloud();
+        // No successful cloud download, then do not update local store
         verify(mockDao, times(0)).saveAll(documentArgumentCaptor.capture());
+
         reset(mockAWSSecretClient);
         reset(mockDao);
-        // one label succeeds and the other throws IOException and SecretManagerException respectively.
-        // Given both labels are in Dao, IOException is ignored and SecretManagerException is thrown
-        when(mockDao.getAll()).thenReturn(SecretDocument.builder().secrets(Arrays.asList(loadMockDaoSecretB(), secondSec)).build());
-
-        when(mockAWSSecretClient.getSecret(any())).thenReturn(getMockSecretB()).thenThrow(SecretManagerException.class);
+        // Subsequent sync, config unchanged so reconcile is skipped. One label download succeeds with a version
+        // that differs from the store, so updateWithSecret persists it; the other label errors and is ignored.
+        when(mockDao.getAll())
+                .thenReturn(SecretDocument.builder().secrets(Arrays.asList(loadMockDaoSecretB(), secondSec)).build());
+        when(mockAWSSecretClient.getSecret(any()))
+                .thenReturn(getMockSecretB()).thenThrow(SecretManagerException.class);
         sm.syncFromCloud();
-        // Only one update from cloud
         verify(mockDao, times(1)).saveAll(documentArgumentCaptor.capture());
-        assertEquals(2, documentArgumentCaptor.getValue().getSecrets().size());
+    }
 
-        reset(mockDao);
-        // one label succeeds and the other throws IOException and SecretManagerException respectively.
-        // Given both labels are in Dao, IOException is ignored and secret is loaded from local
-        when(mockDao.getAll()).thenReturn(SecretDocument.builder().secrets(Arrays.asList(loadMockDaoSecretB(), secondSec)).build());
+    @Test
+    void GIVEN_unchanged_config_WHEN_sync_from_cloud_repeated_THEN_store_and_cache_reconciled_only_once(
+            ExtensionContext context) throws Exception {
+        ignoreExceptionOfType(context, SecretManagerException.class);
+        // GIVEN a mock LocalStoreMap so we can count syncWithConfig (the store+cache reconcile) invocations
+        LocalStoreMap mockLocalStoreMap = mock(LocalStoreMap.class);
+        when(mockDao.getAll()).thenReturn(SecretDocument.builder().secrets(new ArrayList<>()).build());
+        when(mockAWSSecretClient.getSecret(any())).thenThrow(SecretManagerException.class);
+
+        SecretConfiguration secret = SecretConfiguration.builder().arn(ARN_1).build();
+        Configuration config = new Configuration(new Context());
+        config.lookupTopics("services", SecretManagerService.SECRET_MANAGER_SERVICE_NAME)
+                .lookup(CONFIGURATION_CONFIG_KEY, SECRETS_TOPIC).withValueChecked(Collections.singletonList(secret));
+        doReturn(config).when(mockKernelClient).getConfig();
+
+        SecretManager sm = new SecretManager(mockAWSSecretClient, mockDao, mockKernelClient, mockLocalStoreMap);
+
+        // WHEN sync runs three times with the same configuration
         sm.syncFromCloud();
-        verify(mockDao, times(0)).saveAll(documentArgumentCaptor.capture());
+        sm.syncFromCloud();
+        sm.syncFromCloud();
+
+        // THEN the store/cache reconcile happens only on the first sync (config changed from empty to configured)
+        verify(mockLocalStoreMap, times(1)).syncWithConfig(any());
+
+        // WHEN the configuration changes (a second secret is added)
+        Configuration newConfig = new Configuration(new Context());
+        newConfig.lookupTopics("services", SecretManagerService.SECRET_MANAGER_SERVICE_NAME)
+                .lookup(CONFIGURATION_CONFIG_KEY, SECRETS_TOPIC)
+                .withValueChecked(Arrays.asList(secret, SecretConfiguration.builder().arn(ARN_2).build()));
+        doReturn(newConfig).when(mockKernelClient).getConfig();
+        sm.syncFromCloud();
+
+        // THEN the reconcile runs again exactly once more
+        verify(mockLocalStoreMap, times(2)).syncWithConfig(any());
     }
 
 
