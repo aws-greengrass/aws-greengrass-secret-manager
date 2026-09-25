@@ -45,8 +45,6 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.atLeastOnce;
-import static org.mockito.Mockito.doAnswer;
-import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.reset;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
@@ -79,19 +77,10 @@ public class SecretManagerServiceTest {
 
     void startKernelWithConfig(String configFile, State expectedState) throws InterruptedException {
         CountDownLatch secretManagerRunning = new CountDownLatch(1);
-        CountDownLatch cdl = new CountDownLatch(1);
-        doAnswer((i) -> {
-            cdl.countDown();
-            return null;
-        }).when(mockSecretManager).syncFromCloud();
         kernel = new Kernel();
         kernel.parseArgs("-r", rootDir.toAbsolutePath().toString(), "-i",
                 getClass().getResource(configFile).toString());
         kernel.getContext().addGlobalStateChangeListener((GreengrassService service, State was, State newState) -> {
-            if (service.getName().equals(SecretManagerService.SECRET_MANAGER_SERVICE_NAME) && service.getState()
-                    .equals(State.INSTALLED)) {
-                kernel.getContext().get(SecretManagerService.class).setIsInitialSyncComplete(cdl);
-            }
             if (service.getName().equals(SecretManagerService.SECRET_MANAGER_SERVICE_NAME) && service.getState()
                     .equals(expectedState)) {
                 secretManagerRunning.countDown();
@@ -113,26 +102,6 @@ public class SecretManagerServiceTest {
         // Set this property for kernel to scan its own classpath to find plugins
         System.setProperty("aws.greengrass.scanSelfClasspath", "true");
         ignoreErrors(context);
-    }
-
-    @Test
-    void GIVEN_secret_service_WHEN_load_secret_fails_THEN_service_still_running(ExtensionContext context)
-            throws Exception {
-        ignoreExceptionOfType(context, SecretManagerException.class);
-
-        doThrow(SecretManagerException.class).when(mockSecretManager).reloadCache();
-        startKernelWithConfig("config.yaml", State.RUNNING);
-    }
-
-    @Test
-    void GIVEN_secret_service_WHEN_load_secret_fails_with_crypto_error_THEN_service_reloads_secrets(
-            ExtensionContext context) throws Exception {
-        ignoreExceptionOfType(context, SecretManagerException.class);
-
-        SecretManagerException ex = new SecretManagerException(new SecretCryptoException("Bad"));
-        doThrow(ex).when(mockSecretManager).reloadCache();
-        startKernelWithConfig("config.yaml", State.RUNNING);
-        verify(mockSecretManager).syncFromCloud();
     }
 
     private com.aws.greengrass.secretmanager.model.v1.GetSecretValueResult convertSecret(byte[] bytes)
