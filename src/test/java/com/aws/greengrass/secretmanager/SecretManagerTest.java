@@ -66,10 +66,12 @@ import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.ArgumentMatchers.argThat;
 import static org.mockito.Mockito.doReturn;
 import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.lenient;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.reset;
 import static org.mockito.Mockito.spy;
 import static org.mockito.Mockito.times;
@@ -859,12 +861,7 @@ class SecretManagerTest {
     void GIVEN_secret_manager_WHEN_validate_secret_with_friendly_name_THEN_proper_results_are_returned() throws Exception {
         // GIVEN
         loadMockSecrets();
-        String mockArn = "arn:aws:secretsmanager:us-east-1:999936977227:secret:Secret3-74lYJh";
-        when(mockDao.getAll()).thenReturn(SecretDocument.builder().secrets(new ArrayList<>(
-                Collections.singletonList(AWSSecretResponse.builder().name("Secret3")
-                        .arn(mockArn).versionId("mock-version-id")
-                        .versionStages(new ArrayList<>(Collections.singletonList("mock-version-stage"))).build())
-        )).build());
+        when(mockDao.getAll()).thenReturn(SecretDocument.builder().secrets(new ArrayList<>()).build());
         SecretManager sm = new SecretManager(mockAWSSecretClient, mockDao, mockKernelClient, localStoreMap);
         String arn1 = sm.validateSecretId("Secret1");
         assertEquals(arn1, ARN_1);
@@ -881,9 +878,6 @@ class SecretManagerTest {
             assertEquals(getSecretException.getMessage(), "Secret not configured Secret1-74lYJh");
         }
 
-        String arn3 = sm.validateSecretId("Secret3");
-        assertEquals(arn3, mockArn);
-
         try {
             sm.validateSecretId("Secret4");
         } catch (Exception e) {
@@ -892,5 +886,84 @@ class SecretManagerTest {
             assertEquals(getSecretException.getStatus(), 404);
             assertEquals(getSecretException.getMessage(), "Secret not configured Secret4");
         }
+    }
+
+    @Test
+    void GIVEN_friendly_name_not_in_cache_WHEN_validate_secret_THEN_resolves_arn_from_configured_secrets()
+            throws Exception {
+        // GIVEN a secret configured by a full ARN whose friendly name is "Secret3", with an empty cache
+        // (no sync has populated nameToArnMap). This exercises the getArnFromCache friendly-name fallback that
+        // resolves a name to its configured ARN via doesSecretNameMatchWithConfiguredArn.
+        String secret3Arn = "arn:aws:secretsmanager:us-east-1:999936977227:secret:Secret3-9tAbCd";
+        SecretConfiguration configuredSecret3 = SecretConfiguration.builder().arn(secret3Arn).build();
+        Configuration config = new Configuration(new Context());
+        config.lookupTopics("services", SecretManagerService.SECRET_MANAGER_SERVICE_NAME)
+                .lookup(CONFIGURATION_CONFIG_KEY, SECRETS_TOPIC)
+                .withValueChecked(Collections.singletonList(configuredSecret3));
+        doReturn(config).when(mockKernelClient).getConfig();
+        when(mockDao.getAll()).thenReturn(SecretDocument.builder().secrets(new ArrayList<>()).build());
+
+        SecretManager sm = new SecretManager(mockAWSSecretClient, mockDao, mockKernelClient, localStoreMap);
+
+        // WHEN resolving by the friendly name while it is absent from the cache
+        String resolvedArn = sm.validateSecretId("Secret3");
+
+        // THEN it resolves to the configured ARN via the friendly-name fallback
+        assertEquals(secret3Arn, resolvedArn);
+    }
+
+    @Test
+    void GIVEN_secret_missing_from_cache_WHEN_validate_secret_THEN_only_that_secret_is_decrypted()
+            throws Exception {
+        // GIVEN all secrets present on disk, cache empty
+        List<AWSSecretResponse> storedSecrets = new ArrayList<>();
+        storedSecrets.add(loadMockDaoSecretA());    // ARN_1
+        storedSecrets.add(loadMockDaoSecretB());    // ARN_2
+        when(mockDao.getAll()).thenReturn(SecretDocument.builder().secrets(storedSecrets).build());
+
+        // Use a mock LocalStoreMap so we can count decrypt() invocations per secret
+        LocalStoreMap mockLocalStoreMap = mock(LocalStoreMap.class);
+        when(mockLocalStoreMap.decrypt(any(AWSSecretResponse.class))).thenAnswer(inv -> {
+            AWSSecretResponse r = inv.getArgument(0);
+            return getMockSecret(r.getName(), r.getArn(), SECRET_DATE_1, null,
+                    SECRET_VALUE_BINARY_1, r.getVersionId(), r.getVersionStages());
+        });
+
+        SecretManager sm = new SecretManager(mockAWSSecretClient, mockDao, mockKernelClient, mockLocalStoreMap);
+
+        // WHEN a single missing secret is requested by full ARN, triggering a selective load
+        String arn = sm.validateSecretId(ARN_1);
+
+        // THEN only ARN_1 is decrypted; ARN_2 on disk is left untouched (no full reload)
+        assertEquals(ARN_1, arn);
+        verify(mockLocalStoreMap, times(1)).decrypt(argThat(r -> r != null && ARN_1.equals(r.getArn())));
+        verify(mockLocalStoreMap, never()).decrypt(argThat(r -> r != null && ARN_2.equals(r.getArn())));
+    }
+
+    @Test
+    void GIVEN_partial_arn_missing_from_cache_WHEN_validate_secret_THEN_matching_secret_is_decrypted()
+            throws Exception {
+        // GIVEN Secret1 present on disk under its full ARN (ARN_1 == PARTIAL_ARN + "-74lYJh"), and Secret2
+        List<AWSSecretResponse> storedSecrets = new ArrayList<>();
+        storedSecrets.add(loadMockDaoSecretA());    // ARN_1 matches PARTIAL_ARN
+        storedSecrets.add(loadMockDaoSecretB());    // ARN_2 must not match
+        when(mockDao.getAll()).thenReturn(SecretDocument.builder().secrets(storedSecrets).build());
+
+        LocalStoreMap mockLocalStoreMap = mock(LocalStoreMap.class);
+        when(mockLocalStoreMap.decrypt(any(AWSSecretResponse.class))).thenAnswer(inv -> {
+            AWSSecretResponse r = inv.getArgument(0);
+            return getMockSecret(r.getName(), r.getArn(), SECRET_DATE_1, null,
+                    SECRET_VALUE_BINARY_1, r.getVersionId(), r.getVersionStages());
+        });
+
+        SecretManager sm = new SecretManager(mockAWSSecretClient, mockDao, mockKernelClient, mockLocalStoreMap);
+
+        // WHEN a cache miss is triggered using the partial ARN
+        String arn = sm.validateSecretId(PARTIAL_ARN);
+
+        // THEN the partial ARN is returned as-is, only the matching full ARN is decrypted, ARN_2 untouched
+        assertEquals(PARTIAL_ARN, arn);
+        verify(mockLocalStoreMap, times(1)).decrypt(argThat(r -> r != null && ARN_1.equals(r.getArn())));
+        verify(mockLocalStoreMap, never()).decrypt(argThat(r -> r != null && ARN_2.equals(r.getArn())));
     }
 }
