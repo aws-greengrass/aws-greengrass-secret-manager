@@ -24,6 +24,7 @@ import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.MapperFeature;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import software.amazon.awssdk.aws.greengrass.model.SecretValue;
+import software.amazon.awssdk.crt.io.Uri;
 import software.amazon.awssdk.services.secretsmanager.model.GetSecretValueRequest;
 import software.amazon.awssdk.services.secretsmanager.model.GetSecretValueResponse;
 
@@ -33,10 +34,12 @@ import java.util.Arrays;
 import java.util.Collections;
 import java.util.Date;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
+import java.util.Set;
 import java.util.regex.Pattern;
 import javax.inject.Inject;
 
@@ -71,6 +74,7 @@ public class SecretManager {
 
     private final Object syncFromCloudLockObject = new Object();
     private final Object cacheLockObject = new Object();
+    private List<SecretConfiguration> secretConfiguration = new ArrayList<>();
 
     /**
      * Constructor.
@@ -84,6 +88,7 @@ public class SecretManager {
         this.secretClient = secretClient;
         this.localStoreMap = map;
         this.kernelClient = kernelClient;
+        this.secretConfiguration = new ArrayList<>();
     }
 
     private List<SecretConfiguration> getSecretConfiguration() {
@@ -113,6 +118,22 @@ public class SecretManager {
         return new ArrayList<>();
     }
 
+    /*
+     * Normalize a secret configuration list into an arn -> set-of-labels map for comparison. Using a map of sets makes
+     * the equality check independent of the order secrets appear in the config and the order (or duplication) of
+     * labels within a secret, while still treating any add/remove of an arn or a label as a change. This mirrors what
+     * syncWithConfig/save act on (arn + label), so the sync/reload path runs exactly when the persisted set changes.
+     */
+    private static Map<String, Set<String>> toArnLabelMap(List<SecretConfiguration> config) {
+        Map<String, Set<String>> arnToLabels = new HashMap<>();
+        for (SecretConfiguration secret : config) {
+            Set<String> labels =
+                    secret.getLabels() == null ? new HashSet<>() : new HashSet<>(secret.getLabels());
+            arnToLabels.computeIfAbsent(secret.getArn(), k -> new HashSet<>()).addAll(labels);
+        }
+        return arnToLabels;
+    }
+
     /**
      * When the component is installed, it firsts cleans up/syncs the existing local secrets as per the component
      * configuration. It then tries to download latest secret from cloud for each configured secret-label. It then
@@ -121,23 +142,31 @@ public class SecretManager {
      */
     public void syncFromCloud() {
         synchronized (syncFromCloudLockObject) {
-            List<SecretConfiguration> secretConfiguration = getSecretConfiguration();
-            localStoreMap.syncWithConfig(secretConfiguration);
-            try {
-                reloadCache();
-            } catch (SecretManagerException e) {
-                if (e.getCause() instanceof FileSecretStoreException) {
-                    // Happens when the local store is corrupted. Local secret cache is cleared by the time this
-                    // exception is thrown as it is no longer valid. New secrets will be downloaded as needed. So, just
-                    // log and proceed.
-                    logger.atError().log("Exception occurred while updating the local secret cache.");
-                } else {
-                    // Should never happen. Throw any unexpected exceptions.
-                    throw new RuntimeException(e);
+            List<SecretConfiguration> latestConfig = getSecretConfiguration();
+            // Reconcile the local store and cache when the configuration changes, and always when it is empty: an
+            // empty config with stale secrets still on disk must trigger a wipe. Empty-config reconcile is cheap
+            // (nothing to decrypt, and save is a no-op unless there is stale data to remove). Periodic syncs with an
+            // unchanged, non-empty config skip this and just refresh the latest secret from cloud below.
+            if (Utils.isEmpty(latestConfig)
+                    || !toArnLabelMap(latestConfig).equals(toArnLabelMap(this.secretConfiguration))) {
+                this.secretConfiguration = latestConfig;
+                localStoreMap.syncWithConfig(this.secretConfiguration);
+                try {
+                    reloadCache();
+                } catch (SecretManagerException e) {
+                    if (e.getCause() instanceof FileSecretStoreException) {
+                        // Happens when the local store is corrupted. Local secret cache is cleared by the time this
+                        // exception is thrown as it is no longer valid. New secrets will be downloaded as needed. So,
+                        // just log and proceed.
+                        logger.atError().log("Exception occurred while updating the local secret cache.");
+                    } else {
+                        // Should never happen. Throw any unexpected exceptions.
+                        throw new RuntimeException(e);
+                    }
                 }
             }
 
-            for (SecretConfiguration configuredSecret : secretConfiguration) {
+            for (SecretConfiguration configuredSecret : this.secretConfiguration) {
                 String arn = configuredSecret.getArn();
                 if (!isSecretIdArn(arn)) {
                     logger.atWarn().kv("Secret ", arn).log("Skipping invalid secret arn configured");
@@ -254,8 +283,7 @@ public class SecretManager {
      */
     private void refreshSecretFromCloud(String arn, String versionStage) {
         String versionLabel = Utils.isEmpty(versionStage) ? LATEST_LABEL : versionStage;
-        List<SecretConfiguration> configurations = getSecretConfiguration();
-        boolean isSecretLabelConfigured = configurations.stream().anyMatch(
+        boolean isSecretLabelConfigured = getSecretConfiguration().stream().anyMatch(
                 (secret) -> secret.getArn().contains(arn) && secret.getLabels().contains(versionStage));
         // If the requested secret is not  configured, then do not download.
         if (!Utils.isEmpty(versionStage) && !isSecretLabelConfigured) {
@@ -439,8 +467,7 @@ public class SecretManager {
         Fix: try to lookup the secret ARN using the requested secret name in configured secrets.
          */
         if (Utils.isEmpty(arn)) {
-            List<SecretConfiguration> configurations = getSecretConfiguration();
-            Optional<SecretConfiguration> matchedSecretConfig = configurations.stream()
+            Optional<SecretConfiguration> matchedSecretConfig = getSecretConfiguration().stream()
                     .filter(config -> doesSecretNameMatchWithConfiguredArn(secretId, config.getArn()))
                     .findFirst();
             if (matchedSecretConfig.isPresent()) {
