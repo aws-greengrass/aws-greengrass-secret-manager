@@ -55,6 +55,9 @@ import java.util.UUID;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
+import java.util.concurrent.Future;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicReference;
 
 import static com.aws.greengrass.componentmanager.KernelConfigResolver.CONFIGURATION_CONFIG_KEY;
 import static com.aws.greengrass.secretmanager.SecretManagerService.SECRETS_TOPIC;
@@ -62,6 +65,7 @@ import static com.aws.greengrass.testcommons.testutilities.ExceptionLogProtector
 import static org.hamcrest.MatcherAssert.assertThat;
 import static org.hamcrest.Matchers.hasItem;
 import static org.junit.jupiter.api.Assertions.assertArrayEquals;
+import static org.junit.jupiter.api.Assertions.assertDoesNotThrow;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
@@ -1069,5 +1073,78 @@ class SecretManagerTest {
         // WHEN/THEN a null latch is a no-op countdown, not an NPE
         sm.syncFromCloud(null);
         sm.syncFromCloud();
+    }
+
+    @Test
+    void GIVEN_concurrent_refresh_and_reload_WHEN_reading_secret_THEN_no_corruption_or_lost_entry(
+            ExtensionContext context) throws Exception {
+        // Exercises the concurrency fix: refreshSecretFromCloud writes (reachable from concurrent IPC getSecret
+        // threads) and reloadCache clear+repopulate run against concurrent reads. With the plain HashMap this raced;
+        // with ConcurrentHashMap plus cacheLockObject around the refresh write and the reload group it must not
+        // corrupt the map, throw a ConcurrentModificationException, or lose the configured secret.
+        ignoreExceptionOfType(context, SecretManagerException.class);
+        loadMockSecrets();
+        lenient().when(mockAWSSecretClient.getSecret(any())).thenReturn(getMockSecretA());
+        List<AWSSecretResponse> storedSecrets = new ArrayList<>();
+        storedSecrets.add(loadMockDaoSecretA());
+        storedSecrets.add(loadMockDaoSecretB());
+        when(mockDao.getAll()).thenReturn(SecretDocument.builder().secrets(storedSecrets).build());
+        SecretManager sm = new SecretManager(mockAWSSecretClient, mockDao, mockKernelClient, localStoreMap);
+        sm.syncFromCloud(); // prime the cache
+
+        int threads = 8;
+        int iterationsPerThread = 200;
+        ExecutorService pool = Executors.newFixedThreadPool(threads);
+        CountDownLatch start = new CountDownLatch(1);
+        AtomicReference<Throwable> failure = new AtomicReference<>();
+        List<Future<?>> futures = new ArrayList<>();
+
+        for (int t = 0; t < threads; t++) {
+            final boolean reader = (t % 2 == 0);
+            futures.add(pool.submit(() -> {
+                try {
+                    start.await();
+                    for (int i = 0; i < iterationsPerThread; i++) {
+                        if (reader) {
+                            // Reader path: refresh=true drives refreshSecretFromCloud writes, then reads the cache.
+                            software.amazon.awssdk.aws.greengrass.model.GetSecretValueRequest request =
+                                    new software.amazon.awssdk.aws.greengrass.model.GetSecretValueRequest();
+                            request.setSecretId(SECRET_NAME_1);
+                            request.setRefresh(true);
+                            try {
+                                sm.getSecret(request);
+                            } catch (GetSecretException expectedTransient) {
+                                // A full reloadCache clear+repopulate is not atomic to a lock-free reader, so a
+                                // transient 404 while a reload is in progress is an accepted, self-healing outcome.
+                                // What must NOT happen is a memory-safety failure (NPE from a torn read, or a
+                                // ConcurrentModificationException). Those are recorded below and fail the test.
+                            }
+                        } else {
+                            // Writer path: full clear+repopulate of the cache.
+                            sm.reloadCache();
+                        }
+                    }
+                } catch (Throwable e) {
+                    failure.compareAndSet(null, e);
+                }
+            }));
+        }
+
+        start.countDown();
+        for (Future<?> f : futures) {
+            f.get(30, TimeUnit.SECONDS);
+        }
+        pool.shutdownNow();
+
+        // No thread should have hit a memory-safety failure: NPE from a torn HashMap read, a
+        // ConcurrentModificationException, or table corruption. Transient GetSecretException is caught above.
+        assertNull(failure.get(),
+                failure.get() == null ? "" : "Unexpected concurrency failure: " + failure.get());
+
+        // After the storm (no more reloads racing), the configured secret is retrievable: no permanently lost entry.
+        software.amazon.awssdk.aws.greengrass.model.GetSecretValueRequest finalRead =
+                new software.amazon.awssdk.aws.greengrass.model.GetSecretValueRequest();
+        finalRead.setSecretId(SECRET_NAME_1);
+        assertDoesNotThrow(() -> sm.getSecret(finalRead));
     }
 }
