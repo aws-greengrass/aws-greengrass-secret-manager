@@ -13,8 +13,6 @@ import com.aws.greengrass.config.WhatHappened;
 import com.aws.greengrass.dependency.ImplementsService;
 import com.aws.greengrass.dependency.State;
 import com.aws.greengrass.lifecyclemanager.PluginService;
-import com.aws.greengrass.secretmanager.exception.NoSecretFoundException;
-import com.aws.greengrass.secretmanager.exception.SecretManagerException;
 import com.aws.greengrass.secretmanager.exception.v1.GetSecretException;
 import com.aws.greengrass.secretmanager.model.v1.GetSecretValueError;
 import com.aws.greengrass.secretmanager.model.v1.GetSecretValueResult;
@@ -22,7 +20,6 @@ import com.aws.greengrass.util.Coerce;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.MapperFeature;
 import com.fasterxml.jackson.databind.ObjectMapper;
-import lombok.Setter;
 import software.amazon.awssdk.aws.greengrass.GreengrassCoreIPCService;
 
 import java.io.IOException;
@@ -70,9 +67,12 @@ public class SecretManagerService extends PluginService {
     SecretManagerIPCAgent secretManagerIPCAgent;
     @Inject
     private GreengrassCoreIPCService greengrassCoreIPCService;
-    // for testing
-    @Setter
-    private CountDownLatch isInitialSyncComplete = new CountDownLatch(1);
+    // Signals that the in-memory cache has been populated from the local store at least once. Counted down inside
+    // syncFromCloud after the local reconcile/reload and before the cloud refresh loop, so startup blocks only on the
+    // local reload, not the cloud download. Process-lifetime: initialized once and never re-created (in particular not
+    // in install()), so a restart that reuses this instance and skips syncFromCloud still sees a released latch and
+    // does not hang. CountDownLatch.countDown() is idempotent once zero, so every sync counting it down is safe.
+    private final CountDownLatch initialCacheLoaded = new CountDownLatch(1);
 
     /**
      * Constructor for SecretManagerService Service.
@@ -94,8 +94,6 @@ public class SecretManagerService extends PluginService {
     @Override
     protected void install() throws InterruptedException {
         super.install();
-        // Re-initialize the sync counter every time the component is installed
-        setIsInitialSyncComplete(new CountDownLatch(1));
         // subscribe will invoke serviceChanged right away to sync from cloud
         this.config.lookupTopics(CONFIGURATION_CONFIG_KEY).subscribe(this.handleConfigurationChangeLambda);
         // Re-initialize the cloud thread pool for ipc async request processing
@@ -111,10 +109,7 @@ public class SecretManagerService extends PluginService {
             long refreshIntervalSeconds = (long) (Coerce.toDouble(
                     this.config.lookupTopics(CONFIGURATION_CONFIG_KEY).findOrDefault(0, PERIODIC_REFRESH_INTERVAL_MIN))
                     * 60);
-            Runnable syncSecrets = () -> {
-                secretManager.syncFromCloud();
-                isInitialSyncComplete.countDown();
-            };
+            Runnable syncSecrets = () -> secretManager.syncFromCloud(initialCacheLoaded);
             if (refreshIntervalSeconds <= 0) {
                 // Refresh secrets only once and return
                 syncSecrets.run();
@@ -163,27 +158,13 @@ public class SecretManagerService extends PluginService {
 
     @Override
     public void startup() throws InterruptedException {
-        // Wait for the initial sync to complete before marking ourselves as running.
-        // This will throw timeout exception as startup has default timeout of 2 minutes.
-        isInitialSyncComplete.await();
-        // GG_NEEDS_REVIEW: TODO: Modify secret service to only provide interface to deal with downloaded
-        // secrets during download phase.
-
-        // Since we have a valid directory, now try to load secrets if secrets file exists
-        // We don't want to load anything if there is no file, which could happen when
-        // we were not able to download any secrets due to network issues.
-        try {
-            secretManager.reloadCache();
-        } catch (NoSecretFoundException e) {
-            // Ignore. This means we started with empty configuration
-            logger.atDebug().setEventType("secret-manager-startup").log("No secrets configured");
-        } catch (SecretManagerException e) {
-            logger.atWarn().setEventType("secret-manager-startup").log("Unable to reload secrets from cache "
-                    + "during startup");
-        } catch (Exception e) {
-            // Put the service in ERRORED state if something unexpected happens. This should never happen.
-            serviceErrored(e);
-        }
+        // Block only until the in-memory cache has been populated from the local store at least once (signalled by
+        // syncFromCloud after its local reconcile/reload, before the cloud refresh loop). We do NOT wait for the cloud
+        // download: blocking on the network could push startup past its timeout even when valid secrets already exist
+        // on disk. On a plain restart that reuses this instance and skips syncFromCloud, the latch is already released
+        // and the cache is still warm, so this returns immediately. If the latch is somehow never released, the
+        // lifecycle startup timeout will error the service rather than hang forever.
+        initialCacheLoaded.await();
         reportState(State.RUNNING);
     }
 

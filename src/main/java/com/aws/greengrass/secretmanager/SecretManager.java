@@ -40,6 +40,7 @@ import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.Set;
+import java.util.concurrent.CountDownLatch;
 import java.util.regex.Pattern;
 import javax.inject.Inject;
 
@@ -74,7 +75,7 @@ public class SecretManager {
 
     private final Object syncFromCloudLockObject = new Object();
     private final Object cacheLockObject = new Object();
-    private List<SecretConfiguration> secretConfiguration = new ArrayList<>();
+    private List<SecretConfiguration> secretConfiguration;
 
     /**
      * Constructor.
@@ -141,28 +142,52 @@ public class SecretManager {
      * @throws RuntimeException secret manager exceptions
      */
     public void syncFromCloud() {
+        syncFromCloud(null);
+    }
+
+    /**
+     * Same as {@link #syncFromCloud()}, but signals that the in-memory cache has been populated from the local store
+     * at least once. The latch is counted down after the local reconcile/reload step and before the cloud refresh
+     * loop, so a waiter (the service startup) unblocks as soon as the cache is loaded from disk without waiting on
+     * the network. The countdown happens in a finally so it fires on every exit path, including an empty config, a
+     * corrupt local store, and an unexpected exception rethrown from reloadCache. CountDownLatch.countDown() is a
+     * no-op once the latch reaches zero, so passing the same latch on every sync is harmless.
+     *
+     * @param initialCacheLoaded latch signalling the first cache population; may be null when no waiter needs it
+     * @throws RuntimeException secret manager exceptions
+     */
+    public void syncFromCloud(CountDownLatch initialCacheLoaded) {
         synchronized (syncFromCloudLockObject) {
-            List<SecretConfiguration> latestConfig = getSecretConfiguration();
-            // Reconcile the local store and cache when the configuration changes, and always when it is empty: an
-            // empty config with stale secrets still on disk must trigger a wipe. Empty-config reconcile is cheap
-            // (nothing to decrypt, and save is a no-op unless there is stale data to remove). Periodic syncs with an
-            // unchanged, non-empty config skip this and just refresh the latest secret from cloud below.
-            if (Utils.isEmpty(latestConfig)
-                    || !toArnLabelMap(latestConfig).equals(toArnLabelMap(this.secretConfiguration))) {
-                this.secretConfiguration = latestConfig;
-                localStoreMap.syncWithConfig(this.secretConfiguration);
-                try {
-                    reloadCache();
-                } catch (SecretManagerException e) {
-                    if (e.getCause() instanceof FileSecretStoreException) {
-                        // Happens when the local store is corrupted. Local secret cache is cleared by the time this
-                        // exception is thrown as it is no longer valid. New secrets will be downloaded as needed. So,
-                        // just log and proceed.
-                        logger.atError().log("Exception occurred while updating the local secret cache.");
-                    } else {
-                        // Should never happen. Throw any unexpected exceptions.
-                        throw new RuntimeException(e);
+            try {
+                List<SecretConfiguration> latestConfig = getSecretConfiguration();
+                // Reconcile the local store and cache when the configuration changes, and always when it is empty: an
+                // empty config with stale secrets still on disk must trigger a wipe. Empty-config reconcile is cheap
+                // (nothing to decrypt, and save is a no-op unless there is stale data to remove). Periodic syncs with
+                // an unchanged, non-empty config skip this and just refresh the latest secret from cloud below.
+                if (Utils.isEmpty(latestConfig)
+                        || !toArnLabelMap(latestConfig).equals(toArnLabelMap(this.secretConfiguration))) {
+                    this.secretConfiguration = latestConfig;
+                    localStoreMap.syncWithConfig(this.secretConfiguration);
+                    try {
+                        reloadCache();
+                    } catch (SecretManagerException e) {
+                        if (e.getCause() instanceof FileSecretStoreException) {
+                            // Happens when the local store is corrupted. Local secret cache is cleared by the time
+                            // this exception is thrown as it is no longer valid. New secrets will be downloaded as
+                            // needed. So, just log and proceed.
+                            logger.atError().log("Exception occurred while updating the local secret cache.");
+                        } else {
+                            // Should never happen. Throw any unexpected exceptions.
+                            throw new RuntimeException(e);
+                        }
                     }
+                }
+            } finally {
+                // Cache population attempt is done (loaded, empty, or corrupt store). Release the startup waiter
+                // regardless so it never hangs on a reload failure, and before the cloud loop so it does not wait on
+                // the network. Fires even if the local reconcile above threw.
+                if (initialCacheLoaded != null) {
+                    initialCacheLoaded.countDown();
                 }
             }
 

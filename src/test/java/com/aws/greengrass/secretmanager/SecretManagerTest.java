@@ -15,6 +15,7 @@ import com.aws.greengrass.secretmanager.crypto.KeyChain;
 import com.aws.greengrass.secretmanager.crypto.MasterKey;
 import com.aws.greengrass.secretmanager.crypto.RSAMasterKey;
 import com.aws.greengrass.secretmanager.exception.SecretCryptoException;
+import com.aws.greengrass.secretmanager.exception.FileSecretStoreException;
 import com.aws.greengrass.secretmanager.exception.SecretManagerException;
 import com.aws.greengrass.secretmanager.exception.v1.GetSecretException;
 import com.aws.greengrass.secretmanager.kernel.KernelClient;
@@ -51,6 +52,7 @@ import java.util.Base64;
 import java.util.Collections;
 import java.util.List;
 import java.util.UUID;
+import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 
@@ -994,5 +996,78 @@ class SecretManagerTest {
         assertEquals(PARTIAL_ARN, arn);
         verify(mockLocalStoreMap, times(1)).decrypt(argThat(r -> r != null && ARN_1.equals(r.getArn())));
         verify(mockLocalStoreMap, never()).decrypt(argThat(r -> r != null && ARN_2.equals(r.getArn())));
+    }
+
+    @Test
+    void GIVEN_configured_secrets_WHEN_sync_from_cloud_THEN_initial_cache_loaded_latch_counts_down() throws Exception {
+        // GIVEN configured secrets present on disk and available from cloud
+        loadMockSecrets();
+        when(mockAWSSecretClient.getSecret(any())).thenReturn(getMockSecretA()).thenReturn(getMockSecretB());
+        List<AWSSecretResponse> storedSecrets = new ArrayList<>();
+        storedSecrets.add(loadMockDaoSecretA());
+        storedSecrets.add(loadMockDaoSecretB());
+        when(mockDao.getAll()).thenReturn(SecretDocument.builder().secrets(storedSecrets).build());
+        SecretManager sm = new SecretManager(mockAWSSecretClient, mockDao, mockKernelClient, localStoreMap);
+        CountDownLatch initialCacheLoaded = new CountDownLatch(1);
+
+        // WHEN the first sync runs
+        sm.syncFromCloud(initialCacheLoaded);
+
+        // THEN the latch is released (cache populated at least once)
+        assertEquals(0, initialCacheLoaded.getCount());
+    }
+
+    @Test
+    void GIVEN_empty_config_WHEN_sync_from_cloud_THEN_initial_cache_loaded_latch_counts_down() throws Exception {
+        // GIVEN no secrets configured (empty config) and an empty local store
+        Configuration config = new Configuration(new Context());
+        config.lookupTopics("services", SecretManagerService.SECRET_MANAGER_SERVICE_NAME)
+                .lookup(CONFIGURATION_CONFIG_KEY, SECRETS_TOPIC).withValueChecked(new ArrayList<SecretConfiguration>());
+        doReturn(config).when(mockKernelClient).getConfig();
+        when(mockDao.getAll()).thenReturn(SecretDocument.builder().secrets(new ArrayList<>()).build());
+        SecretManager sm = new SecretManager(mockAWSSecretClient, mockDao, mockKernelClient, localStoreMap);
+        CountDownLatch initialCacheLoaded = new CountDownLatch(1);
+
+        // WHEN sync runs with an empty configuration
+        sm.syncFromCloud(initialCacheLoaded);
+
+        // THEN the latch is still released so startup does not hang on a device with no secrets
+        assertEquals(0, initialCacheLoaded.getCount());
+    }
+
+    @Test
+    void GIVEN_local_store_read_fails_WHEN_sync_from_cloud_THEN_latch_counts_down_even_though_it_throws(
+            ExtensionContext context) throws Exception {
+        // GIVEN a local store whose read fails during the reconcile reload. FileSecretStoreException is thrown
+        // directly (its cause is the underlying IOException, not a FileSecretStoreException), so the reconcile
+        // rethrows it wrapped as a RuntimeException. This is the "unexpected exception" exit path.
+        ignoreExceptionOfType(context, FileSecretStoreException.class);
+        loadMockSecrets();
+        when(mockDao.getAll()).thenThrow(new FileSecretStoreException("Cannot read secret response from store",
+                new java.io.IOException("disk error")));
+        SecretManager sm = new SecretManager(mockAWSSecretClient, mockDao, mockKernelClient, localStoreMap);
+        CountDownLatch initialCacheLoaded = new CountDownLatch(1);
+
+        // WHEN sync runs and the reload throws
+        assertThrows(RuntimeException.class, () -> sm.syncFromCloud(initialCacheLoaded));
+
+        // THEN the latch is still released by the finally, so startup unblocks instead of hanging on a store failure
+        assertEquals(0, initialCacheLoaded.getCount());
+    }
+
+    @Test
+    void GIVEN_null_latch_WHEN_sync_from_cloud_THEN_does_not_throw() throws Exception {
+        // GIVEN the no-arg / null-latch path (callers that do not wait on startup)
+        loadMockSecrets();
+        when(mockAWSSecretClient.getSecret(any())).thenReturn(getMockSecretA()).thenReturn(getMockSecretB());
+        List<AWSSecretResponse> storedSecrets = new ArrayList<>();
+        storedSecrets.add(loadMockDaoSecretA());
+        storedSecrets.add(loadMockDaoSecretB());
+        when(mockDao.getAll()).thenReturn(SecretDocument.builder().secrets(storedSecrets).build());
+        SecretManager sm = new SecretManager(mockAWSSecretClient, mockDao, mockKernelClient, localStoreMap);
+
+        // WHEN/THEN a null latch is a no-op countdown, not an NPE
+        sm.syncFromCloud(null);
+        sm.syncFromCloud();
     }
 }
