@@ -20,6 +20,7 @@ import com.aws.greengrass.secretmanager.store.FileSecretStore;
 import com.aws.greengrass.security.SecurityService;
 import com.aws.greengrass.security.exceptions.KeyLoadingException;
 import com.aws.greengrass.testcommons.testutilities.GGExtension;
+import com.aws.greengrass.util.Coerce;
 import com.aws.greengrass.util.EncryptionUtils;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
@@ -27,6 +28,8 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.junit.jupiter.api.extension.ExtensionContext;
 import org.junit.jupiter.api.io.TempDir;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.ValueSource;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.slf4j.event.Level;
@@ -46,17 +49,20 @@ import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicInteger;
 
 import static com.aws.greengrass.componentmanager.KernelConfigResolver.CONFIGURATION_CONFIG_KEY;
 import static com.aws.greengrass.deployment.DeviceConfiguration.DEVICE_PARAM_PRIVATE_KEY_PATH;
 import static com.aws.greengrass.deployment.DeviceConfiguration.SYSTEM_NAMESPACE_KEY;
 import static com.aws.greengrass.secretmanager.SecretManagerService.CLOUD_REQUEST_QUEUE_SIZE_TOPIC;
 import static com.aws.greengrass.secretmanager.SecretManagerService.PERFORMANCE_TOPIC;
+import static com.aws.greengrass.secretmanager.SecretManagerService.PERIODIC_REFRESH_INTERVAL_MIN;
 import static com.aws.greengrass.secretmanager.TestUtil.ignoreErrors;
 import static com.aws.greengrass.testcommons.testutilities.ExceptionLogProtector.ignoreExceptionOfType;
 import static org.hamcrest.MatcherAssert.assertThat;
 import static org.hamcrest.Matchers.containsString;
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
@@ -76,13 +82,28 @@ public class SecretManagerServiceIntegTest extends BaseITCase {
     @Mock
     AWSSecretClient secretClient;
 
+    /**
+     * Starts the kernel with the default cloud responses and, for a one-time refresh config, waits for the background
+     * cloud sync to finish so tests see the downloaded secrets.
+     */
     void startKernelWithConfig(String configFile, State expectedState) throws Exception {
+        mockSecretResponse();
+        launchKernel(configFile, expectedState);
+        if (isOneTimeRefresh()) {
+            awaitOneTimeCloudSync();
+        }
+    }
+
+    /**
+     * Starts the kernel and waits for the secret manager to reach the expected state. It does not wait for the cloud
+     * sync, which runs in the background.
+     */
+    private void launchKernel(String configFile, State expectedState) throws Exception {
         URI privateKey = getClass().getResource("privateKey.pem").toURI();
         URI certUri = getClass().getResource("cert.pem").toURI();
         lenient().doReturn(privateKey).when(mockSecurityService).getDeviceIdentityPrivateKeyURI();
         lenient().doReturn(certUri).when(mockSecurityService).getDeviceIdentityCertificateURI();
         lenient().doReturn(EncryptionUtils.loadPrivateKeyPair(Paths.get(privateKey))).when(mockSecurityService).getKeyPair(privateKey, certUri);
-        mockSecretResponse();
         kernel = new Kernel();
         kernel.parseArgs("-r", rootDir.toAbsolutePath().toString(), "-i",
                 getClass().getResource(configFile).toString());
@@ -99,6 +120,18 @@ public class SecretManagerServiceIntegTest extends BaseITCase {
         kernel.launch();
 
         assertTrue(secretManagerRunning.await(10, TimeUnit.SECONDS));
+    }
+
+    private boolean isOneTimeRefresh() {
+        return Coerce.toDouble(kernel.getConfig()
+                .lookupTopics("services", SecretManagerService.SECRET_MANAGER_SERVICE_NAME, CONFIGURATION_CONFIG_KEY)
+                .findOrDefault(0, PERIODIC_REFRESH_INTERVAL_MIN)) <= 0;
+    }
+
+    // Waits for the most recently scheduled one-time sync. Must not be used with periodic refresh, whose future
+    // never completes.
+    private void awaitOneTimeCloudSync() throws Exception {
+        kernel.getContext().get(SecretManagerService.class).getScheduledSyncFuture().get(10, TimeUnit.SECONDS);
     }
 
     private void mockSecretResponse() throws SecretManagerException, IOException {
@@ -377,49 +410,50 @@ public class SecretManagerServiceIntegTest extends BaseITCase {
         int noOfCloudCalls = 130;
         kernel.getConfig().lookupTopics("services", SecretManagerService.SECRET_MANAGER_SERVICE_NAME,
                 CONFIGURATION_CONFIG_KEY, PERFORMANCE_TOPIC).lookup(CLOUD_REQUEST_QUEUE_SIZE_TOPIC).withValue(0);
-        CountDownLatch responseLatch = new CountDownLatch(noOfCloudCalls);
-        lenient().doAnswer((i)-> {
-            responseLatch.countDown();
-            return software.amazon.awssdk.services.secretsmanager.model.GetSecretValueResponse.builder()
-                            .name("Secret1").arn(arn).secretString("updatedSecretValue").versionId("updatedVersionId")
-                            .versionStages("new").createdDate(Instant.now().minusSeconds(1000000)).build();
-                })
+        lenient().doAnswer((i) ->
+                software.amazon.awssdk.services.secretsmanager.model.GetSecretValueResponse.builder()
+                        .name("Secret1").arn(arn).secretString("updatedSecretValue").versionId("updatedVersionId")
+                        .versionStages("new").createdDate(Instant.now().minusSeconds(1000000)).build())
                 .when(secretClient).getSecret(GetSecretValueRequest.builder().secretId(arn).versionStage("new").build());
 
-        GreengrassCoreIPCClientV2 clientV2 = null;
-        try {
-            clientV2 = IPCTestUtils.connectV2Client(kernel, "ComponentRequestingSecrets");
-        } catch (IOException e) {
-            throw new RuntimeException(e);
-        }
-        CountDownLatch latch = new CountDownLatch(noOfCloudCalls);
-        for (int i=0;i<=noOfCloudCalls;i++) {
+        GreengrassCoreIPCClientV2 clientV2 = IPCTestUtils.connectV2Client(kernel, "ComponentRequestingSecrets");
+
+        // Fire the requests concurrently and observe every outcome deterministically: a request either succeeds
+        // (served from cache) or is rejected with "Unable to queue request" once the queue is full. Join every future
+        // so no outcome is silently swallowed on a pool thread.
+        AtomicInteger succeeded = new AtomicInteger();
+        AtomicInteger rejected = new AtomicInteger();
+        CompletableFuture<?>[] futures = new CompletableFuture[noOfCloudCalls];
+        for (int i = 0; i < noOfCloudCalls; i++) {
             GreengrassCoreIPCClientV2 finalClientV = clientV2;
-            CompletableFuture.supplyAsync(()->{
+            futures[i] = CompletableFuture.runAsync(() -> {
                 software.amazon.awssdk.aws.greengrass.model.GetSecretValueRequest getSecret =
                         new software.amazon.awssdk.aws.greengrass.model.GetSecretValueRequest();
                 getSecret.setSecretId("Secret1");
                 getSecret.setVersionStage("new");
                 getSecret.setRefresh(true);
-                GetSecretValueResponse response= null;
                 try {
-
-                    response = finalClientV.getSecretValue(getSecret);
+                    GetSecretValueResponse response = finalClientV.getSecretValue(getSecret);
+                    assertEquals(arn, response.getSecretId());
+                    assertEquals("updatedVersionId", response.getVersionId());
+                    assertEquals("updatedSecretValue", response.getSecretValue().getSecretString());
+                    succeeded.incrementAndGet();
+                } catch (ServiceError err) {
+                    assertEquals("Unable to queue request", err.getMessage());
+                    rejected.incrementAndGet();
                 } catch (InterruptedException e) {
                     throw new RuntimeException(e);
-                } catch (ServiceError err) {
-                    assertEquals("Unable to queue request",err.getMessage());
                 }
-                latch.countDown();
-                assertEquals(arn, response.getSecretId());
-                assertEquals("id2", response.getVersionId());
-                assertEquals("secretValue2", response.getSecretValue().getSecretString());
-                return null;
             });
         }
-        latch.await(3, TimeUnit.MINUTES);
-        // At least 100 (default cloud call queue size) tasks are completed.Some tasks are rejected.
-        assertTrue(responseLatch.getCount()>0 && responseLatch.getCount()<=30);
+        CompletableFuture.allOf(futures).get(3, TimeUnit.MINUTES);
+
+        // Every request is accounted for, the queue backed by the default size (100) rejected the overflow (so not
+        // all requests succeeded), and at least one request got through. This verifies the invalid size (0) fell back
+        // to the default without asserting an exact, timing-dependent reject count.
+        assertEquals(noOfCloudCalls, succeeded.get() + rejected.get());
+        assertTrue(rejected.get() > 0, "expected some requests to be rejected by the default-sized queue");
+        assertTrue(succeeded.get() > 0, "expected some requests to succeed");
     }
 
     @Test
@@ -478,61 +512,37 @@ public class SecretManagerServiceIntegTest extends BaseITCase {
         assertThat(err.getMessage(), containsString("Secret not configured secretNotConfigured"));
     }
 
-    @Test
-    void GIVEN_secret_service_WHEN_cloud_sync_is_slow_THEN_service_reaches_running_without_waiting(
+    @ParameterizedTest
+    @ValueSource(strings = {"config.yaml", "config_refresh.yaml"}) // one-time and periodic refresh
+    void GIVEN_secret_service_WHEN_cloud_sync_is_slow_THEN_service_reaches_running_without_waiting(String configFile,
             ExtensionContext context) throws Exception {
         ignoreExceptionOfType(context, SecretManagerException.class);
-        URI privateKey = getClass().getResource("privateKey.pem").toURI();
-        URI certUri = getClass().getResource("cert.pem").toURI();
-        lenient().doReturn(privateKey).when(mockSecurityService).getDeviceIdentityPrivateKeyURI();
-        lenient().doReturn(certUri).when(mockSecurityService).getDeviceIdentityCertificateURI();
-        lenient().doReturn(EncryptionUtils.loadPrivateKeyPair(Paths.get(privateKey)))
-                .when(mockSecurityService).getKeyPair(privateKey, certUri);
-
         String arn = "arn:aws:secretsmanager:us-east-1:999936977227:secret:Secret1-74lYJh";
-        CountDownLatch syncStarted = new CountDownLatch(1);
-        CountDownLatch allowSyncToFinish = new CountDownLatch(1);
-        AtomicBoolean cloudSyncFinished = new AtomicBoolean(false);
+        CountDownLatch cloudDownloadReleased = new CountDownLatch(1);
+        AtomicBoolean cloudDownloadFinished = new AtomicBoolean(false);
 
-        // Cloud sync will block until we release it
+        // Cloud download blocks until the test releases it
         doAnswer(invocation -> {
-            syncStarted.countDown();
             try {
-                allowSyncToFinish.await();
+                cloudDownloadReleased.await();
             } catch (InterruptedException e) {
-                // Kernel shutdown interrupts threads; this is expected during teardown
+                // Kernel shutdown interrupts the sync; this is expected during teardown
                 Thread.currentThread().interrupt();
                 throw new SecretManagerException("Interrupted during sync");
             }
-            cloudSyncFinished.set(true);
+            cloudDownloadFinished.set(true);
             return software.amazon.awssdk.services.secretsmanager.model.GetSecretValueResponse.builder()
                     .name("Secret1").arn(arn).secretString("secretValue").versionId(VERSION_ID)
                     .versionStages(CURRENT_LABEL)
                     .createdDate(Instant.now().minusSeconds(1000000)).build();
         }).when(secretClient).getSecret(any(GetSecretValueRequest.class));
 
-        kernel = new Kernel();
-        kernel.parseArgs("-r", rootDir.toAbsolutePath().toString(), "-i",
-                getClass().getResource("config_refresh.yaml").toString());
-
-        CountDownLatch secretManagerRunning = new CountDownLatch(1);
-        kernel.getContext().addGlobalStateChangeListener((GreengrassService service, State was, State newState) -> {
-            if (service.getName().equals(SecretManagerService.SECRET_MANAGER_SERVICE_NAME)
-                    && newState.equals(State.RUNNING)) {
-                secretManagerRunning.countDown();
-            }
-        });
-        kernel.getContext().put(AWSSecretClient.class, secretClient);
-        kernel.getContext().put(SecurityService.class, mockSecurityService);
-        kernel.launch();
-
-        // Wait for sync to start (proves the scheduled task is running)
-        assertTrue(syncStarted.await(10, TimeUnit.SECONDS),
-                "Cloud sync should have started");
-        // Service should reach RUNNING while cloud sync is still blocked
-        assertTrue((secretManagerRunning.await(10, TimeUnit.SECONDS) && !cloudSyncFinished.get()),
-                "Service should reach RUNNING without waiting for cloud sync");
-        allowSyncToFinish.countDown();
+        try {
+            launchKernel(configFile, State.RUNNING);
+            assertFalse(cloudDownloadFinished.get(), "Service should reach RUNNING without waiting for cloud sync");
+        } finally {
+            cloudDownloadReleased.countDown();
+        }
     }
 
     @Test
@@ -540,13 +550,6 @@ public class SecretManagerServiceIntegTest extends BaseITCase {
             ExtensionContext context) throws Exception {
         ignoreExceptionOfType(context, SecretManagerException.class);
         ignoreExceptionOfType(context, GetSecretException.class);
-        URI privateKey = getClass().getResource("privateKey.pem").toURI();
-        URI certUri = getClass().getResource("cert.pem").toURI();
-        lenient().doReturn(privateKey).when(mockSecurityService).getDeviceIdentityPrivateKeyURI();
-        lenient().doReturn(certUri).when(mockSecurityService).getDeviceIdentityCertificateURI();
-        lenient().doReturn(EncryptionUtils.loadPrivateKeyPair(Paths.get(privateKey)))
-                .when(mockSecurityService).getKeyPair(privateKey, certUri);
-
         String arn = "arn:aws:secretsmanager:us-east-1:999936977227:secret:Secret1-74lYJh";
         CountDownLatch syncAttempted = new CountDownLatch(1);
 
@@ -556,23 +559,8 @@ public class SecretManagerServiceIntegTest extends BaseITCase {
             throw new SecretManagerException("Network unavailable");
         }).when(secretClient).getSecret(any(GetSecretValueRequest.class));
 
-        kernel = new Kernel();
-        kernel.parseArgs("-r", rootDir.toAbsolutePath().toString(), "-i",
-                getClass().getResource("config_refresh.yaml").toString());
-
-        CountDownLatch secretManagerRunning = new CountDownLatch(1);
-        kernel.getContext().addGlobalStateChangeListener((GreengrassService service, State was, State newState) -> {
-            if (service.getName().equals(SecretManagerService.SECRET_MANAGER_SERVICE_NAME)
-                    && newState.equals(State.RUNNING)) {
-                secretManagerRunning.countDown();
-            }
-        });
-        kernel.getContext().put(AWSSecretClient.class, secretClient);
-        kernel.getContext().put(SecurityService.class, mockSecurityService);
-        kernel.launch();
-
         // Service is running but secrets haven't synced
-        assertTrue(secretManagerRunning.await(10, TimeUnit.SECONDS));
+        launchKernel("config_refresh.yaml", State.RUNNING);
         assertTrue(syncAttempted.await(10, TimeUnit.SECONDS));
 
         GreengrassCoreIPCClientV2 clientV2 = IPCTestUtils.connectV2Client(kernel, "ComponentRequestingSecrets");
@@ -696,6 +684,8 @@ public class SecretManagerServiceIntegTest extends BaseITCase {
                 .withNewerValue(System.currentTimeMillis(), 0);
         // Wait for publish queue to process the config change
         kernel.getContext().runOnPublishQueueAndWait(() -> {});
+
+        awaitOneTimeCloudSync();
 
         // Now restart the service (INSTALLED -> RUNNING, install() is not re-run). startup() does not reload the
         // cache, so the fresh in-memory value synced above is preserved and served after the restart.

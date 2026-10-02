@@ -25,7 +25,9 @@ import org.junit.jupiter.api.io.TempDir;
 import org.mockito.ArgumentCaptor;
 import org.mockito.Captor;
 import org.mockito.Mock;
+import org.mockito.invocation.InvocationOnMock;
 import org.mockito.junit.jupiter.MockitoExtension;
+import org.mockito.stubbing.Answer;
 
 import java.io.IOException;
 import java.nio.file.Path;
@@ -77,17 +79,16 @@ public class SecretManagerServiceTest {
     ArgumentCaptor<Permission> permissionCaptor;
 
     void startKernelWithConfig(String configFile, State expectedState) throws InterruptedException {
-        CountDownLatch secretManagerRunning = new CountDownLatch(1);
-        // The real syncFromCloud counts down the latch it is passed (after the local reload, before the cloud loop).
-        // mockSecretManager would not, so startup() would block on initialCacheLoaded.await() forever. Mirror the
-        // production contract: count down the latch argument so the mocked service can reach RUNNING.
-        doAnswer((i) -> {
-            CountDownLatch latch = i.getArgument(0);
-            if (latch != null) {
-                latch.countDown();
-            }
+        startKernelWithConfig(configFile, expectedState, (i) -> {
+            signalInitialCacheLoaded(i);
             return null;
-        }).when(mockSecretManager).syncFromCloud(any());
+        });
+    }
+
+    void startKernelWithConfig(String configFile, State expectedState, Answer<Void> syncFromCloud)
+            throws InterruptedException {
+        CountDownLatch secretManagerRunning = new CountDownLatch(1);
+        doAnswer(syncFromCloud).when(mockSecretManager).syncFromCloud(any());
         kernel = new Kernel();
         kernel.parseArgs("-r", rootDir.toAbsolutePath().toString(), "-i",
                 getClass().getResource(configFile).toString());
@@ -103,6 +104,13 @@ public class SecretManagerServiceTest {
         assertTrue(secretManagerRunning.await(10, TimeUnit.SECONDS));
     }
 
+    // The real syncFromCloud counts down the latch it is passed after loading the cache from the local store, and
+    // startup() waits on that latch. Mocked syncs must do the same or the service never reaches RUNNING.
+    private static void signalInitialCacheLoaded(InvocationOnMock syncFromCloud) {
+        CountDownLatch initialCacheLoaded = syncFromCloud.getArgument(0);
+        initialCacheLoaded.countDown();
+    }
+
     @AfterEach
     void cleanup() {
         kernel.shutdown();
@@ -113,6 +121,23 @@ public class SecretManagerServiceTest {
         // Set this property for kernel to scan its own classpath to find plugins
         System.setProperty("aws.greengrass.scanSelfClasspath", "true");
         ignoreErrors(context);
+    }
+
+    @Test
+    void GIVEN_one_time_refresh_WHEN_cloud_download_is_slow_THEN_service_reaches_running_without_waiting()
+            throws Exception {
+        // config.yaml has no periodicRefreshIntervalMin, so secrets are synced from cloud only once. Hold that sync
+        // after the local cache load, as if the cloud download were still in progress, and expect RUNNING anyway.
+        CountDownLatch cloudDownloadReleased = new CountDownLatch(1);
+        try {
+            startKernelWithConfig("config.yaml", State.RUNNING, (i) -> {
+                signalInitialCacheLoaded(i);
+                cloudDownloadReleased.await();
+                return null;
+            });
+        } finally {
+            cloudDownloadReleased.countDown();
+        }
     }
 
     private com.aws.greengrass.secretmanager.model.v1.GetSecretValueResult convertSecret(byte[] bytes)

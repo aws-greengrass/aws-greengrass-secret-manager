@@ -109,21 +109,23 @@ public class SecretManagerService extends PluginService {
             long refreshIntervalSeconds = (long) (Coerce.toDouble(
                     this.config.lookupTopics(CONFIGURATION_CONFIG_KEY).findOrDefault(0, PERIODIC_REFRESH_INTERVAL_MIN))
                     * 60);
-            Runnable syncSecrets = () -> secretManager.syncFromCloud(initialCacheLoaded);
+            // Always sync in the background so the caller (the config subscription, which runs during install) never
+            // waits on the cloud download. Exceptions are logged here because the scheduler would otherwise capture
+            // them silently in the future, and a periodic task that throws is never run again.
+            Runnable syncSecrets = () -> {
+                try {
+                    secretManager.syncFromCloud(initialCacheLoaded);
+                } catch (Exception ex) {
+                    logger.atError().cause(ex).log("Unable to sync configured secrets from cloud");
+                }
+            };
             if (refreshIntervalSeconds <= 0) {
-                // Refresh secrets only once and return
-                syncSecrets.run();
+                // Refresh secrets only once
+                scheduledSyncFuture = ses.schedule(syncSecrets, 0, TimeUnit.SECONDS);
             } else {
                 // Schedule syncing secrets at configured intervals
-                scheduledSyncFuture = ses.scheduleAtFixedRate(() -> {
-                    try {
-                        syncSecrets.run();
-                    } catch (Exception ex) {
-                        // Scheduler future will not run scheduled tasks if one of them is completed with an exception.
-                        // This is to ensure that unknown exceptions are also caught so the scheduler keeps on running
-                        logger.atError().cause(ex).log("Unable to sync configured secrets from cloud");
-                    }
-                }, 0, refreshIntervalSeconds, TimeUnit.SECONDS);
+                scheduledSyncFuture = ses.scheduleAtFixedRate(syncSecrets, 0, refreshIntervalSeconds,
+                        TimeUnit.SECONDS);
             }
         }
     }
@@ -138,6 +140,13 @@ public class SecretManagerService extends PluginService {
             }
         }
         logger.atDebug().log("Done shutting down secrets manager");
+    }
+
+    // Visible for testing: lets tests wait for a one-time background sync to finish.
+    ScheduledFuture<?> getScheduledSyncFuture() {
+        synchronized (scheduleSyncFutureLockObject) {
+            return scheduledSyncFuture;
+        }
     }
 
     @Override
