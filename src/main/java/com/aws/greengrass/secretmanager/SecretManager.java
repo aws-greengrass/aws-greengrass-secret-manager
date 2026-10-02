@@ -40,6 +40,8 @@ import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.Set;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.CountDownLatch;
 import java.util.regex.Pattern;
 import javax.inject.Inject;
 
@@ -61,9 +63,13 @@ public class SecretManager {
     private static final String secretNotConfiguredErr = "Secret not configured ";
     private static final String IPC_REQUEST_REFRESH_FIELD = "refresh";
     private final Logger logger = LogManager.getLogger(SecretManager.class);
-    // Cache which holds aws secrets result
-    private final Map<String, GetSecretValueResponse> cache = new HashMap<>();
-    private final Map<String, String> nameToArnMap = new HashMap<>();
+    // Cache which holds aws secrets result. ConcurrentHashMap so unsynchronized writers on the cloud-refresh path
+    // (refreshSecretFromCloud, reachable concurrently from multiple IPC getSecret threads and from a syncFromCloud
+    // tick) and concurrent readers (getSecretFromCache / isSecretPresentInCache / getArnFromCache) are individually
+    // thread-safe without a shared lock. cacheLockObject is still used to keep the clear+reload sequence in
+    // reloadCache atomic as a group.
+    private final Map<String, GetSecretValueResponse> cache = new ConcurrentHashMap<>();
+    private final Map<String, String> nameToArnMap = new ConcurrentHashMap<>();
 
     private final AWSSecretClient secretClient;
     private final SecretStore<SecretDocument, AWSSecretResponse> secretStore;
@@ -74,7 +80,7 @@ public class SecretManager {
 
     private final Object syncFromCloudLockObject = new Object();
     private final Object cacheLockObject = new Object();
-    private List<SecretConfiguration> secretConfiguration = new ArrayList<>();
+    private List<SecretConfiguration> secretConfiguration;
 
     /**
      * Constructor.
@@ -141,28 +147,52 @@ public class SecretManager {
      * @throws RuntimeException secret manager exceptions
      */
     public void syncFromCloud() {
+        syncFromCloud(null);
+    }
+
+    /**
+     * Same as {@link #syncFromCloud()}, but signals that the in-memory cache has been populated from the local store
+     * at least once. The latch is counted down after the local reconcile/reload step and before the cloud refresh
+     * loop, so a waiter (the service startup) unblocks as soon as the cache is loaded from disk without waiting on
+     * the network. The countdown happens in a finally so it fires on every exit path, including an empty config, a
+     * corrupt local store, and an unexpected exception rethrown from reloadCache. CountDownLatch.countDown() is a
+     * no-op once the latch reaches zero, so passing the same latch on every sync is harmless.
+     *
+     * @param initialCacheLoaded latch signalling the first cache population; may be null when no waiter needs it
+     * @throws RuntimeException secret manager exceptions
+     */
+    public void syncFromCloud(CountDownLatch initialCacheLoaded) {
         synchronized (syncFromCloudLockObject) {
-            List<SecretConfiguration> latestConfig = getSecretConfiguration();
-            // Reconcile the local store and cache when the configuration changes, and always when it is empty: an
-            // empty config with stale secrets still on disk must trigger a wipe. Empty-config reconcile is cheap
-            // (nothing to decrypt, and save is a no-op unless there is stale data to remove). Periodic syncs with an
-            // unchanged, non-empty config skip this and just refresh the latest secret from cloud below.
-            if (Utils.isEmpty(latestConfig)
-                    || !toArnLabelMap(latestConfig).equals(toArnLabelMap(this.secretConfiguration))) {
-                this.secretConfiguration = latestConfig;
-                localStoreMap.syncWithConfig(this.secretConfiguration);
-                try {
-                    reloadCache();
-                } catch (SecretManagerException e) {
-                    if (e.getCause() instanceof FileSecretStoreException) {
-                        // Happens when the local store is corrupted. Local secret cache is cleared by the time this
-                        // exception is thrown as it is no longer valid. New secrets will be downloaded as needed. So,
-                        // just log and proceed.
-                        logger.atError().log("Exception occurred while updating the local secret cache.");
-                    } else {
-                        // Should never happen. Throw any unexpected exceptions.
-                        throw new RuntimeException(e);
+            try {
+                List<SecretConfiguration> latestConfig = getSecretConfiguration();
+                // Reconcile the local store and cache when the configuration changes, and always when it is empty: an
+                // empty config with stale secrets still on disk must trigger a wipe. Empty-config reconcile is cheap
+                // (nothing to decrypt, and save is a no-op unless there is stale data to remove). Periodic syncs with
+                // an unchanged, non-empty config skip this and just refresh the latest secret from cloud below.
+                if (Utils.isEmpty(latestConfig)
+                        || !toArnLabelMap(latestConfig).equals(toArnLabelMap(this.secretConfiguration))) {
+                    this.secretConfiguration = latestConfig;
+                    localStoreMap.syncWithConfig(this.secretConfiguration);
+                    try {
+                        reloadCache();
+                    } catch (SecretManagerException e) {
+                        if (e.getCause() instanceof FileSecretStoreException) {
+                            // Happens when the local store is corrupted. Local secret cache is cleared by the time
+                            // this exception is thrown as it is no longer valid. New secrets will be downloaded as
+                            // needed. So, just log and proceed.
+                            logger.atError().log("Exception occurred while updating the local secret cache.");
+                        } else {
+                            // Should never happen. Throw any unexpected exceptions.
+                            throw new RuntimeException(e);
+                        }
                     }
+                }
+            } finally {
+                // Cache population attempt is done (loaded, empty, or corrupt store). Release the startup waiter
+                // regardless so it never hangs on a reload failure, and before the cloud loop so it does not wait on
+                // the network. Fires even if the local reconcile above threw.
+                if (initialCacheLoaded != null) {
+                    initialCacheLoaded.countDown();
                 }
             }
 
@@ -299,10 +329,14 @@ public class SecretManager {
             localStoreMap.updateWithSecret(response, getSecretConfiguration());
             /*
             Always update the in-memory cache as saving to disk may fail due to a slow TPM but that should not fail
-            a get secret IPC request
+            a get secret IPC request. Take cacheLockObject only around the in-memory writes (never across the network
+            getSecret above or the disk updateWithSecret) so these writes do not interleave with reloadCache's
+            clear+repopulate, while a slow or blocked cloud call never stalls concurrent cache readers.
              */
-            this.nameToArnMap.put(response.name(), response.arn());
-            this.putSecretInCache(response);
+            synchronized (cacheLockObject) {
+                this.nameToArnMap.put(response.name(), response.arn());
+                this.putSecretInCache(response);
+            }
         } catch (SecretManagerException e) {
             logger.atError().kv("secret", arn).kv("versionStage", versionStage).cause(e)
                     .log("Unable to refresh secret from cloud. Local store will not be updated");
@@ -323,29 +357,35 @@ public class SecretManager {
 
     private GetSecretValueResponse getSecretFromCache(String secretId, String arn, String versionId,
                                                       String versionStage) throws GetSecretException {
+        // Read each key with a single get and branch on null. A separate containsKey-then-get is not atomic: a
+        // concurrent reloadCache clear could remove the entry between the check and the get, returning null and
+        // NPEing downstream. ConcurrentHashMap makes each get safe, so one get is both correct and race-free.
         if (!Utils.isEmpty(versionId)) {
-            if (!isSecretPresentInCache(arn + versionId)) {
+            GetSecretValueResponse secret = cache.get(arn + versionId);
+            if (secret == null) {
                 String errorStr = "Version Id " + versionId + " not found for secret " + secretId;
                 logger.atError().kv("secretId", secretId).log(errorStr);
                 throw new GetSecretException(404, errorStr);
             }
-            return cache.get(arn + versionId);
+            return secret;
         }
 
         if (!Utils.isEmpty(versionStage)) {
-            if (!isSecretPresentInCache(arn + versionStage)) {
+            GetSecretValueResponse secret = cache.get(arn + versionStage);
+            if (secret == null) {
                 String errorStr = "Version stage " + versionStage + " not found for secret " + secretId;
                 logger.atError().kv("secretId", secretId).log(errorStr);
                 throw new GetSecretException(404, errorStr);
             }
-            return cache.get(arn + versionStage);
+            return secret;
         }
         // If none of the label and version are specified then return LATEST_LABEL
-        if (!isSecretPresentInCache((arn + LATEST_LABEL))) {
+        GetSecretValueResponse secret = cache.get(arn + LATEST_LABEL);
+        if (secret == null) {
             logger.atError().kv("secretId", secretId).log(secretNotFoundErr);
             throw new GetSecretException(404, secretNotFoundErr + secretId);
         }
-        return cache.get(arn + LATEST_LABEL);
+        return secret;
     }
 
     private GetSecretValueResponse getSecret(String secretId, String versionId, String versionStage,

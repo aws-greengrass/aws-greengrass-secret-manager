@@ -25,7 +25,9 @@ import org.junit.jupiter.api.io.TempDir;
 import org.mockito.ArgumentCaptor;
 import org.mockito.Captor;
 import org.mockito.Mock;
+import org.mockito.invocation.InvocationOnMock;
 import org.mockito.junit.jupiter.MockitoExtension;
+import org.mockito.stubbing.Answer;
 
 import java.io.IOException;
 import java.nio.file.Path;
@@ -46,7 +48,6 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.atLeastOnce;
 import static org.mockito.Mockito.doAnswer;
-import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.reset;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
@@ -78,20 +79,20 @@ public class SecretManagerServiceTest {
     ArgumentCaptor<Permission> permissionCaptor;
 
     void startKernelWithConfig(String configFile, State expectedState) throws InterruptedException {
-        CountDownLatch secretManagerRunning = new CountDownLatch(1);
-        CountDownLatch cdl = new CountDownLatch(1);
-        doAnswer((i) -> {
-            cdl.countDown();
+        startKernelWithConfig(configFile, expectedState, (i) -> {
+            signalInitialCacheLoaded(i);
             return null;
-        }).when(mockSecretManager).syncFromCloud();
+        });
+    }
+
+    void startKernelWithConfig(String configFile, State expectedState, Answer<Void> syncFromCloud)
+            throws InterruptedException {
+        CountDownLatch secretManagerRunning = new CountDownLatch(1);
+        doAnswer(syncFromCloud).when(mockSecretManager).syncFromCloud(any());
         kernel = new Kernel();
         kernel.parseArgs("-r", rootDir.toAbsolutePath().toString(), "-i",
                 getClass().getResource(configFile).toString());
         kernel.getContext().addGlobalStateChangeListener((GreengrassService service, State was, State newState) -> {
-            if (service.getName().equals(SecretManagerService.SECRET_MANAGER_SERVICE_NAME) && service.getState()
-                    .equals(State.INSTALLED)) {
-                kernel.getContext().get(SecretManagerService.class).setIsInitialSyncComplete(cdl);
-            }
             if (service.getName().equals(SecretManagerService.SECRET_MANAGER_SERVICE_NAME) && service.getState()
                     .equals(expectedState)) {
                 secretManagerRunning.countDown();
@@ -101,6 +102,13 @@ public class SecretManagerServiceTest {
         kernel.getContext().put(AuthorizationHandler.class, mockAuthorizationHandler);
         kernel.launch();
         assertTrue(secretManagerRunning.await(10, TimeUnit.SECONDS));
+    }
+
+    // The real syncFromCloud counts down the latch it is passed after loading the cache from the local store, and
+    // startup() waits on that latch. Mocked syncs must do the same or the service never reaches RUNNING.
+    private static void signalInitialCacheLoaded(InvocationOnMock syncFromCloud) {
+        CountDownLatch initialCacheLoaded = syncFromCloud.getArgument(0);
+        initialCacheLoaded.countDown();
     }
 
     @AfterEach
@@ -116,23 +124,20 @@ public class SecretManagerServiceTest {
     }
 
     @Test
-    void GIVEN_secret_service_WHEN_load_secret_fails_THEN_service_still_running(ExtensionContext context)
+    void GIVEN_one_time_refresh_WHEN_cloud_download_is_slow_THEN_service_reaches_running_without_waiting()
             throws Exception {
-        ignoreExceptionOfType(context, SecretManagerException.class);
-
-        doThrow(SecretManagerException.class).when(mockSecretManager).reloadCache();
-        startKernelWithConfig("config.yaml", State.RUNNING);
-    }
-
-    @Test
-    void GIVEN_secret_service_WHEN_load_secret_fails_with_crypto_error_THEN_service_reloads_secrets(
-            ExtensionContext context) throws Exception {
-        ignoreExceptionOfType(context, SecretManagerException.class);
-
-        SecretManagerException ex = new SecretManagerException(new SecretCryptoException("Bad"));
-        doThrow(ex).when(mockSecretManager).reloadCache();
-        startKernelWithConfig("config.yaml", State.RUNNING);
-        verify(mockSecretManager).syncFromCloud();
+        // config.yaml has no periodicRefreshIntervalMin, so secrets are synced from cloud only once. Hold that sync
+        // after the local cache load, as if the cloud download were still in progress, and expect RUNNING anyway.
+        CountDownLatch cloudDownloadReleased = new CountDownLatch(1);
+        try {
+            startKernelWithConfig("config.yaml", State.RUNNING, (i) -> {
+                signalInitialCacheLoaded(i);
+                cloudDownloadReleased.await();
+                return null;
+            });
+        } finally {
+            cloudDownloadReleased.countDown();
+        }
     }
 
     private com.aws.greengrass.secretmanager.model.v1.GetSecretValueResult convertSecret(byte[] bytes)

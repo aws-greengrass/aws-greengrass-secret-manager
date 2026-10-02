@@ -164,7 +164,6 @@ public class LocalStoreMap {
      * @param result secret response to encrypt
      * @param secretConfiguration secret manager component configuration
      * @return true if the secret is updated in the local store, false otherwise.
-     * @throws SecretCryptoException when encryption fails
      */
     public boolean updateWithSecret(GetSecretValueResponse result, List<SecretConfiguration> secretConfiguration) {
         Labels labels = secrets.get(result.arn());
