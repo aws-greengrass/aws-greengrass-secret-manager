@@ -11,7 +11,6 @@ import com.aws.greengrass.integrationtests.BaseITCase;
 import com.aws.greengrass.integrationtests.ipc.IPCTestUtils;
 import com.aws.greengrass.lifecyclemanager.GreengrassService;
 import com.aws.greengrass.lifecyclemanager.Kernel;
-import com.aws.greengrass.logging.impl.config.LogConfig;
 import com.aws.greengrass.secretmanager.exception.SecretCryptoException;
 import com.aws.greengrass.secretmanager.exception.SecretManagerException;
 import com.aws.greengrass.secretmanager.exception.v1.GetSecretException;
@@ -29,7 +28,6 @@ import org.junit.jupiter.api.extension.ExtensionContext;
 import org.junit.jupiter.api.io.TempDir;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
-import org.slf4j.event.Level;
 import software.amazon.awssdk.aws.greengrass.GreengrassCoreIPCClientV2;
 import software.amazon.awssdk.aws.greengrass.model.GetSecretValueResponse;
 import software.amazon.awssdk.aws.greengrass.model.ResourceNotFoundError;
@@ -42,10 +40,14 @@ import java.net.URI;
 import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.time.Instant;
-import java.util.concurrent.CompletableFuture;
+import java.util.Queue;
+import java.util.concurrent.ConcurrentLinkedQueue;
 import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicInteger;
 
 import static com.aws.greengrass.componentmanager.KernelConfigResolver.CONFIGURATION_CONFIG_KEY;
 import static com.aws.greengrass.deployment.DeviceConfiguration.DEVICE_PARAM_PRIVATE_KEY_PATH;
@@ -65,6 +67,9 @@ import static org.mockito.Mockito.*;
 
 @ExtendWith({MockitoExtension.class, GGExtension.class})
 public class SecretManagerServiceIntegTest extends BaseITCase {
+    // Mirrors SecretManagerIPCAgent's DEFAULT_CLOUD_REQUEST_SIZE, which is private
+    private static final int DEFAULT_CLOUD_REQUEST_QUEUE_SIZE = 100;
+
     private final String VERSION_ID = "id";
     private final String CURRENT_LABEL = "AWSCURRENT";
     private Kernel kernel;
@@ -371,55 +376,80 @@ public class SecretManagerServiceIntegTest extends BaseITCase {
 
     @Test
     void GIVEN_secret_service_with_invalid_cloud_queue_size_WHEN_ipc_request_THEN_use_default_size() throws Exception {
-        LogConfig.getRootLogConfig().setLevel(Level.DEBUG);
-        startKernelWithConfig("config.yaml", State.RUNNING);
+        // The invalid queue size is configured at launch rather than written afterwards: writing it triggers a
+        // reinstall, and this test is about the fallback to the default size, not about reinstall behaviour.
+        startKernelWithConfig("config_invalid_queue_size.yaml", State.RUNNING);
         String arn = "arn:aws:secretsmanager:us-east-1:999936977227:secret:Secret1-74lYJh";
-        int noOfCloudCalls = 130;
-        kernel.getConfig().lookupTopics("services", SecretManagerService.SECRET_MANAGER_SERVICE_NAME,
-                CONFIGURATION_CONFIG_KEY, PERFORMANCE_TOPIC).lookup(CLOUD_REQUEST_QUEUE_SIZE_TOPIC).withValue(0);
-        CountDownLatch responseLatch = new CountDownLatch(noOfCloudCalls);
-        lenient().doAnswer((i)-> {
-            responseLatch.countDown();
+        // More requests than the default queue holds plus the one worker, so the queue has to overflow
+        int noOfRequests = DEFAULT_CLOUD_REQUEST_QUEUE_SIZE + 30;
+
+        // Hold every cloud call open until all the requests are in. The pool has a single worker, so otherwise it
+        // drains about as fast as requests arrive and whether anything is ever rejected depends on machine speed.
+        CountDownLatch releaseCloudCalls = new CountDownLatch(1);
+        lenient().doAnswer(i -> {
+            releaseCloudCalls.await();
             return software.amazon.awssdk.services.secretsmanager.model.GetSecretValueResponse.builder()
-                            .name("Secret1").arn(arn).secretString("updatedSecretValue").versionId("updatedVersionId")
-                            .versionStages("new").createdDate(Instant.now().minusSeconds(1000000)).build();
-                })
-                .when(secretClient).getSecret(GetSecretValueRequest.builder().secretId(arn).versionStage("new").build());
+                    .name("Secret1").arn(arn).secretString("updatedSecretValue").versionId("updatedVersionId")
+                    .versionStages("new").createdDate(Instant.now().minusSeconds(1000000)).build();
+        }).when(secretClient).getSecret(GetSecretValueRequest.builder().secretId(arn).versionStage("new").build());
 
-        GreengrassCoreIPCClientV2 clientV2 = null;
+        GreengrassCoreIPCClientV2 clientV2 = IPCTestUtils.connectV2Client(kernel, "ComponentRequestingSecrets");
+        AtomicInteger accepted = new AtomicInteger();
+        AtomicInteger rejected = new AtomicInteger();
+        Queue<Throwable> unexpected = new ConcurrentLinkedQueue<>();
+        CountDownLatch finished = new CountDownLatch(noOfRequests);
+        // getSecretValue blocks until the server replies, so each outstanding request needs its own thread.
+        // CompletableFuture.supplyAsync would run these on the common ForkJoinPool, whose parallelism is
+        // cores - 1: on a two core runner that serialises them and the queue never fills.
+        ExecutorService requestThreads = Executors.newFixedThreadPool(noOfRequests);
         try {
-            clientV2 = IPCTestUtils.connectV2Client(kernel, "ComponentRequestingSecrets");
-        } catch (IOException e) {
-            throw new RuntimeException(e);
-        }
-        CountDownLatch latch = new CountDownLatch(noOfCloudCalls);
-        for (int i=0;i<=noOfCloudCalls;i++) {
-            GreengrassCoreIPCClientV2 finalClientV = clientV2;
-            CompletableFuture.supplyAsync(()->{
-                software.amazon.awssdk.aws.greengrass.model.GetSecretValueRequest getSecret =
-                        new software.amazon.awssdk.aws.greengrass.model.GetSecretValueRequest();
-                getSecret.setSecretId("Secret1");
-                getSecret.setVersionStage("new");
-                getSecret.setRefresh(true);
-                GetSecretValueResponse response= null;
-                try {
+            for (int i = 0; i < noOfRequests; i++) {
+                requestThreads.submit(() -> {
+                    try {
+                        software.amazon.awssdk.aws.greengrass.model.GetSecretValueRequest getSecret =
+                                new software.amazon.awssdk.aws.greengrass.model.GetSecretValueRequest();
+                        getSecret.setSecretId("Secret1");
+                        getSecret.setVersionStage("new");
+                        getSecret.setRefresh(true);
+                        GetSecretValueResponse response = clientV2.getSecretValue(getSecret);
+                        assertEquals(arn, response.getSecretId());
+                        assertEquals("updatedVersionId", response.getVersionId());
+                        assertEquals("updatedSecretValue", response.getSecretValue().getSecretString());
+                        accepted.incrementAndGet();
+                    } catch (ServiceError err) {
+                        if ("Unable to queue request".equals(err.getMessage())) {
+                            rejected.incrementAndGet();
+                        } else {
+                            unexpected.add(err);
+                        }
+                    } catch (Throwable t) {
+                        unexpected.add(t);
+                    } finally {
+                        finished.countDown();
+                    }
+                });
+            }
 
-                    response = finalClientV.getSecretValue(getSecret);
-                } catch (InterruptedException e) {
-                    throw new RuntimeException(e);
-                } catch (ServiceError err) {
-                    assertEquals("Unable to queue request",err.getMessage());
-                }
-                latch.countDown();
-                assertEquals(arn, response.getSecretId());
-                assertEquals("id2", response.getVersionId());
-                assertEquals("secretValue2", response.getSecretValue().getSecretString());
-                return null;
-            });
+            // Nothing can drain while the cloud calls are held, so the overflow past the queue is rejected as soon
+            // as it arrives. Wait for that before releasing, so the rejections are not themselves a race.
+            long deadline = System.currentTimeMillis() + TimeUnit.SECONDS.toMillis(60);
+            while (rejected.get() == 0 && System.currentTimeMillis() < deadline) {
+                Thread.sleep(50);
+            }
+            releaseCloudCalls.countDown();
+            assertTrue(finished.await(2, TimeUnit.MINUTES), "requests did not all finish");
+        } finally {
+            releaseCloudCalls.countDown();
+            requestThreads.shutdownNow();
         }
-        latch.await(3, TimeUnit.MINUTES);
-        // At least 100 (default cloud call queue size) tasks are completed.Some tasks are rejected.
-        assertTrue(responseLatch.getCount()>0 && responseLatch.getCount()<=30);
+
+        assertTrue(unexpected.isEmpty(), () -> "unexpected request failures: " + unexpected);
+        // A configured size of 0 is invalid, so the default must have been used instead: at least that many
+        // requests were accepted, and the rest were rejected rather than queued without limit.
+        assertTrue(accepted.get() >= DEFAULT_CLOUD_REQUEST_QUEUE_SIZE,
+                () -> "expected at least " + DEFAULT_CLOUD_REQUEST_QUEUE_SIZE + " requests to be accepted, but only "
+                        + accepted.get() + " were (" + rejected.get() + " rejected)");
+        assertTrue(rejected.get() > 0, "expected the bounded queue to reject the overflow, but none was rejected");
     }
 
     @Test
