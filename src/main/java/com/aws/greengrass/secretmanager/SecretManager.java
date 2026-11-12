@@ -154,7 +154,7 @@ public class SecretManager {
                 try {
                     reloadCache();
                 } catch (SecretManagerException e) {
-                    if (e.getCause() instanceof FileSecretStoreException) {
+                    if (e instanceof FileSecretStoreException) {
                         // Happens when the local store is corrupted. Local secret cache is cleared by the time this
                         // exception is thrown as it is no longer valid. New secrets will be downloaded as needed. So,
                         // just log and proceed.
