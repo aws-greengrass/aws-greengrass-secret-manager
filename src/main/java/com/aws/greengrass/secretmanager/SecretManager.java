@@ -40,6 +40,7 @@ import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.Set;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.regex.Pattern;
 import javax.inject.Inject;
 
@@ -61,9 +62,10 @@ public class SecretManager {
     private static final String secretNotConfiguredErr = "Secret not configured ";
     private static final String IPC_REQUEST_REFRESH_FIELD = "refresh";
     private final Logger logger = LogManager.getLogger(SecretManager.class);
-    // Cache which holds aws secrets result
-    private final Map<String, GetSecretValueResponse> cache = new HashMap<>();
-    private final Map<String, String> nameToArnMap = new HashMap<>();
+    // Holds aws secrets result. Concurrent so lock-free readers and the cloud-refresh writer are safe individually;
+    // cacheLockObject groups the writes that must land together.
+    private final Map<String, GetSecretValueResponse> cache = new ConcurrentHashMap<>();
+    private final Map<String, String> nameToArnMap = new ConcurrentHashMap<>();
 
     private final AWSSecretClient secretClient;
     private final SecretStore<SecretDocument, AWSSecretResponse> secretStore;
@@ -74,6 +76,8 @@ public class SecretManager {
 
     private final Object syncFromCloudLockObject = new Object();
     private final Object cacheLockObject = new Object();
+    // Serializes reads of the local store that publish into the cache, so the one that read last publishes last.
+    private final Object reloadLockObject = new Object();
     private List<SecretConfiguration> secretConfiguration = new ArrayList<>();
 
     /**
@@ -182,16 +186,47 @@ public class SecretManager {
 
     /**
      * Load secrets into cache from the local store. This method can be called from several threads 1. Service thread
-     * during start up 2. IPC thread when refresh is set to true. 3. Secret manager config subscription thread -
-     * syncFromCloud 4. scheduler thread that periodically refreshes secrets - syncFromCloud
+     * during start up 2. Secret manager config subscription thread - syncFromCloud 3. scheduler thread that
+     * periodically refreshes secrets - syncFromCloud
+     *
+     * <p>The store read and the decrypts happen outside cacheLockObject; only the swap holds it.
      *
      * @throws SecretManagerException when there are issues reading from disk
      */
     public void reloadCache() throws SecretManagerException {
-        synchronized (cacheLockObject) {
-            clearCache();
+        synchronized (reloadLockObject) {
+            List<AWSSecretResponse> storedSecrets;
+            try {
+                storedSecrets = secretStore.getAll().getSecrets();
+            } catch (SecretManagerException e) {
+                // syncFromCloud relies on the cache being empty when a store failure surfaces here.
+                clearCache();
+                throw e;
+            }
+
+            Map<String, String> decryptedNameToArn = new HashMap<>();
+            Map<String, GetSecretValueResponse> decryptedSecrets = new HashMap<>();
+            if (!Utils.isEmpty(storedSecrets)) {
+                for (AWSSecretResponse secretResult : storedSecrets) {
+                    decryptAndStage(secretResult, decryptedNameToArn, decryptedSecrets);
+                }
+            }
+
             logger.atDebug("load-secret-local-store").log();
-            loadAllSecretsFromLocalStore();
+            // The clear and the add must land as one group, so a reader never sees a half-replaced cache.
+            synchronized (cacheLockObject) {
+                clearCache();
+                addSecretsToCache(decryptedNameToArn, decryptedSecrets);
+            }
+        }
+    }
+
+    // Callers may already hold cacheLockObject; it is reentrant.
+    private void addSecretsToCache(Map<String, String> decryptedNameToArn,
+                                   Map<String, GetSecretValueResponse> decryptedSecrets) {
+        synchronized (cacheLockObject) {
+            nameToArnMap.putAll(decryptedNameToArn);
+            cache.putAll(decryptedSecrets);
         }
     }
 
@@ -206,31 +241,22 @@ public class SecretManager {
      * @throws SecretManagerException secret manager exception
      */
     private void loadSecretFromLocalStore(String arn) throws SecretManagerException {
-        synchronized (cacheLockObject) {
+        synchronized (reloadLockObject) {
             List<AWSSecretResponse> secrets = secretStore.getAll().getSecrets();
             if (Utils.isEmpty(secrets) || Utils.isEmpty(arn)) {
                 return;
             }
+            Map<String, String> decryptedNameToArn = new HashMap<>();
+            Map<String, GetSecretValueResponse> decryptedSecrets = new HashMap<>();
             for (AWSSecretResponse secretResult : secrets) {
                 if (!isArnMatch(secretResult.getArn(), arn)) {
                     continue;
                 }
                 // Do not break: a single arn can have multiple stored records (one per label/version),
                 // and all of them must be loaded so every cache key for the secret is populated.
-                loadCache(secretResult);
+                decryptAndStage(secretResult, decryptedNameToArn, decryptedSecrets);
             }
-        }
-    }
-
-    private void loadAllSecretsFromLocalStore() throws SecretManagerException {
-        synchronized (cacheLockObject) {
-            List<AWSSecretResponse> secrets = secretStore.getAll().getSecrets();
-            if (Utils.isEmpty(secrets)) {
-                return;
-            }
-            for (AWSSecretResponse secretResult : secrets) {
-                loadCache(secretResult);
-            }
+            addSecretsToCache(decryptedNameToArn, decryptedSecrets);
         }
     }
 
@@ -252,27 +278,22 @@ public class SecretManager {
     }
 
     /*
-    * Cache holds multiple references of the secret with different keys for fast lookup
-    * Secret with arn1, version V1, labels as L1 and L2 is loaded as 4 entries
-    * arn1 -> secret1
-    * arn1:v1 -> secret2
-    * arn1:l1 -> secret3
-    * arn1:l2 -> secret4
-    */
-    private void loadCache(AWSSecretResponse awsSecretResponse) {
-        synchronized (cacheLockObject) {
-            nameToArnMap.put(awsSecretResponse.getName(), awsSecretResponse.getArn());
-            GetSecretValueResponse decryptedResponse;
-            try {
-                decryptedResponse = localStoreMap.decrypt(awsSecretResponse);
-            } catch (SecretCryptoException e) {
-                // This should never happen ideally
-                logger.atError().kv("secret", awsSecretResponse.getArn()).cause(e).log("Unable to decrypt secret, "
-                        + "skip loading in cache");
-                return;
-            }
-            putSecretInCache(decryptedResponse.arn(), decryptedResponse.versionId(), decryptedResponse);
+     * Decrypt one stored record into the staging maps, for the caller to publish. The name -> arn mapping is kept
+     * even when decryption fails, so the caller can still resolve the name and fall back to the cloud.
+     */
+    private void decryptAndStage(AWSSecretResponse awsSecretResponse, Map<String, String> decryptedNameToArn,
+                                 Map<String, GetSecretValueResponse> decryptedSecrets) {
+        decryptedNameToArn.put(awsSecretResponse.getName(), awsSecretResponse.getArn());
+        GetSecretValueResponse decryptedResponse;
+        try {
+            decryptedResponse = localStoreMap.decrypt(awsSecretResponse);
+        } catch (SecretCryptoException e) {
+            // This should never happen ideally
+            logger.atError().kv("secret", awsSecretResponse.getArn()).cause(e).log("Unable to decrypt secret, "
+                    + "skip loading in cache");
+            return;
         }
+        putSecretEntries(decryptedSecrets, decryptedResponse.arn(), decryptedResponse.versionId(), decryptedResponse);
     }
 
     /*
@@ -299,53 +320,64 @@ public class SecretManager {
             localStoreMap.updateWithSecret(response, getSecretConfiguration());
             /*
             Always update the in-memory cache as saving to disk may fail due to a slow TPM but that should not fail
-            a get secret IPC request
+            a get secret IPC request. The lock covers only these writes, so they cannot interleave with a reload.
              */
-            this.nameToArnMap.put(response.name(), response.arn());
-            this.putSecretInCache(response);
+            synchronized (cacheLockObject) {
+                this.nameToArnMap.put(response.name(), response.arn());
+                putSecretEntries(cache, response.arn(), response.versionId(), response);
+            }
         } catch (SecretManagerException e) {
             logger.atError().kv("secret", arn).kv("versionStage", versionStage).cause(e)
                     .log("Unable to refresh secret from cloud. Local store will not be updated");
         }
     }
 
-    private void putSecretInCache(String secretArn, String versionId, GetSecretValueResponse secret) {
-        cache.put(secretArn, secret);
-        cache.put(secretArn + versionId, secret);
+    /*
+    * Cache holds multiple references of the secret with different keys for fast lookup
+    * Secret with arn1, version V1, labels as L1 and L2 is loaded as 4 entries
+    * arn1 -> secret1
+    * arn1:v1 -> secret2
+    * arn1:l1 -> secret3
+    * arn1:l2 -> secret4
+    * Writes into the given map so callers can stage entries before publishing them.
+    */
+    private void putSecretEntries(Map<String, GetSecretValueResponse> target, String secretArn, String versionId,
+                                  GetSecretValueResponse secret) {
+        target.put(secretArn, secret);
+        target.put(secretArn + versionId, secret);
         for (String label : secret.versionStages()) {
-            cache.put(secretArn + label, secret);
+            target.put(secretArn + label, secret);
         }
-    }
-
-    private void putSecretInCache(GetSecretValueResponse secret) {
-        putSecretInCache(secret.arn(), secret.versionId(), secret);
     }
 
     private GetSecretValueResponse getSecretFromCache(String secretId, String arn, String versionId,
                                                       String versionStage) throws GetSecretException {
         if (!Utils.isEmpty(versionId)) {
-            if (!isSecretPresentInCache(arn + versionId)) {
+            GetSecretValueResponse secret = cache.get(arn + versionId);
+            if (secret == null) {
                 String errorStr = "Version Id " + versionId + " not found for secret " + secretId;
                 logger.atError().kv("secretId", secretId).log(errorStr);
                 throw new GetSecretException(404, errorStr);
             }
-            return cache.get(arn + versionId);
+            return secret;
         }
 
         if (!Utils.isEmpty(versionStage)) {
-            if (!isSecretPresentInCache(arn + versionStage)) {
+            GetSecretValueResponse secret = cache.get(arn + versionStage);
+            if (secret == null) {
                 String errorStr = "Version stage " + versionStage + " not found for secret " + secretId;
                 logger.atError().kv("secretId", secretId).log(errorStr);
                 throw new GetSecretException(404, errorStr);
             }
-            return cache.get(arn + versionStage);
+            return secret;
         }
         // If none of the label and version are specified then return LATEST_LABEL
-        if (!isSecretPresentInCache((arn + LATEST_LABEL))) {
+        GetSecretValueResponse secret = cache.get(arn + LATEST_LABEL);
+        if (secret == null) {
             logger.atError().kv("secretId", secretId).log(secretNotFoundErr);
             throw new GetSecretException(404, secretNotFoundErr + secretId);
         }
-        return cache.get(arn + LATEST_LABEL);
+        return secret;
     }
 
     private GetSecretValueResponse getSecret(String secretId, String versionId, String versionStage,
