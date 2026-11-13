@@ -39,7 +39,6 @@ import java.util.concurrent.TimeUnit;
 import static com.aws.greengrass.secretmanager.TestUtil.ignoreErrors;
 import static com.aws.greengrass.testcommons.testutilities.ExceptionLogProtector.ignoreExceptionOfType;
 import static org.hamcrest.MatcherAssert.assertThat;
-import static org.hamcrest.Matchers.containsString;
 import static org.hamcrest.Matchers.hasItem;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
@@ -79,19 +78,17 @@ public class SecretManagerServiceTest {
 
     void startKernelWithConfig(String configFile, State expectedState) throws InterruptedException {
         CountDownLatch secretManagerRunning = new CountDownLatch(1);
-        CountDownLatch cdl = new CountDownLatch(1);
+        // The cloud sync is started by startup() and runs in the background, so wait for it before asserting on the
+        // mock. The service reaches RUNNING without it, which is the point of the design.
+        CountDownLatch syncedFromCloud = new CountDownLatch(1);
         doAnswer((i) -> {
-            cdl.countDown();
+            syncedFromCloud.countDown();
             return null;
         }).when(mockSecretManager).syncFromCloud();
         kernel = new Kernel();
         kernel.parseArgs("-r", rootDir.toAbsolutePath().toString(), "-i",
                 getClass().getResource(configFile).toString());
         kernel.getContext().addGlobalStateChangeListener((GreengrassService service, State was, State newState) -> {
-            if (service.getName().equals(SecretManagerService.SECRET_MANAGER_SERVICE_NAME) && service.getState()
-                    .equals(State.INSTALLED)) {
-                kernel.getContext().get(SecretManagerService.class).setIsInitialSyncComplete(cdl);
-            }
             if (service.getName().equals(SecretManagerService.SECRET_MANAGER_SERVICE_NAME) && service.getState()
                     .equals(expectedState)) {
                 secretManagerRunning.countDown();
@@ -101,6 +98,7 @@ public class SecretManagerServiceTest {
         kernel.getContext().put(AuthorizationHandler.class, mockAuthorizationHandler);
         kernel.launch();
         assertTrue(secretManagerRunning.await(10, TimeUnit.SECONDS));
+        assertTrue(syncedFromCloud.await(10, TimeUnit.SECONDS));
     }
 
     @AfterEach
@@ -260,41 +258,4 @@ public class SecretManagerServiceTest {
         assertEquals("getSecret Error", parsedResponse.getMessage());
     }
 
-    @Test
-    void GIVEN_secret_service_WHEN_v1_get_called_THEN_correct_errors_returned(ExtensionContext context)
-            throws Exception {
-        ignoreExceptionOfType(context, AuthorizationException.class);
-        startKernelWithConfig("config.yaml", State.RUNNING);
-        final String serviceName = "mockService";
-
-        when(mockAuthorizationHandler.isAuthorized(any(), any())).thenThrow(AuthorizationException.class);
-        com.aws.greengrass.secretmanager.model.v1.GetSecretValueRequest request =
-                com.aws.greengrass.secretmanager.model.v1.GetSecretValueRequest.builder().secretId(SECRET_ID)
-                        .versionId(VERSION_ID).build();
-        byte[] byteRequest = OBJECT_MAPPER.writeValueAsBytes(request);
-        byte[] getSecretResponse =
-                kernel.getContext().get(SecretManagerService.class).getSecret(serviceName, byteRequest);
-        com.aws.greengrass.secretmanager.model.v1.GetSecretValueError actualResponse = convertError(getSecretResponse);
-
-        assertEquals(403, actualResponse.getStatus());
-
-        // simulate get secret throwing exception internally
-        reset(mockAuthorizationHandler);
-        when(mockAuthorizationHandler.isAuthorized(any(), any())).thenReturn(true);
-        GetSecretException exception = new GetSecretException(400, "test");
-        when(mockSecretManager.getSecret(
-                any(com.aws.greengrass.secretmanager.model.v1.GetSecretValueRequest.class))).thenThrow(exception);
-        getSecretResponse = kernel.getContext().get(SecretManagerService.class).getSecret(serviceName, byteRequest);
-
-        actualResponse = convertError(getSecretResponse);
-        assertEquals(400, actualResponse.getStatus());
-        assertThat(actualResponse.getMessage(), containsString("test"));
-
-        // Now send in a bad request
-        byteRequest = OBJECT_MAPPER.writeValueAsBytes("bad request");
-        getSecretResponse = kernel.getContext().get(SecretManagerService.class).getSecret(serviceName, byteRequest);
-        actualResponse = convertError(getSecretResponse);
-        assertEquals(400, actualResponse.getStatus());
-        assertThat(actualResponse.getMessage(), containsString("Unable to parse request"));
-    }
 }

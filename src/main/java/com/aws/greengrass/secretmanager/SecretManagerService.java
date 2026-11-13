@@ -22,15 +22,13 @@ import com.aws.greengrass.util.Coerce;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.MapperFeature;
 import com.fasterxml.jackson.databind.ObjectMapper;
-import lombok.Setter;
 import software.amazon.awssdk.aws.greengrass.GreengrassCoreIPCService;
 
 import java.io.IOException;
 import java.util.Collections;
 import java.util.HashSet;
-import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.Future;
 import java.util.concurrent.ScheduledExecutorService;
-import java.util.concurrent.ScheduledFuture;
 import java.util.concurrent.TimeUnit;
 import javax.inject.Inject;
 
@@ -50,19 +48,29 @@ public class SecretManagerService extends PluginService {
 
     private final SecretManager secretManager;
     private final AuthorizationHandler authorizationHandler;
-    private ScheduledFuture<?> scheduledSyncFuture = null;
+    // The one-shot or the periodic sync, whichever the configured refresh interval selected
+    private Future<?> syncFuture = null;
+    // Guarded by scheduleSyncFutureLockObject. False until startup() has loaded the cache from the local store. No
+    // cloud sync is started before then, so a download can never race the reload.
+    private boolean cacheLoaded = false;
     private final Object scheduleSyncFutureLockObject = new Object();
     private final ScheduledExecutorService ses;
     private final ChildChanged handleConfigurationChangeLambda = (whatHappened, node) -> {
         if (whatHappened == WhatHappened.timestampUpdated || whatHappened == WhatHappened.interiorAdded) {
             return;
         }
-        if (whatHappened == WhatHappened.initialized || SECRETS_TOPIC.equals(node.getName())
-                || PERIODIC_REFRESH_INTERVAL_MIN.equals(node.getName())) {
+        if (whatHappened == WhatHappened.initialized) {
+            // Topics.subscribe passes a null node when it invokes the watcher on initialization
+            serviceChanged();
+            return;
+        }
+        if (node == null) {
+            return;
+        }
+        if (SECRETS_TOPIC.equals(node.getName()) || PERIODIC_REFRESH_INTERVAL_MIN.equals(node.getName())) {
             serviceChanged();
         }
-
-        if (node != null && CLOUD_REQUEST_QUEUE_SIZE_TOPIC.equals(node.getName())) {
+        if (CLOUD_REQUEST_QUEUE_SIZE_TOPIC.equals(node.getName())) {
             requestReinstall();
         }
     };
@@ -70,9 +78,6 @@ public class SecretManagerService extends PluginService {
     SecretManagerIPCAgent secretManagerIPCAgent;
     @Inject
     private GreengrassCoreIPCService greengrassCoreIPCService;
-    // for testing
-    @Setter
-    private CountDownLatch isInitialSyncComplete = new CountDownLatch(1);
 
     /**
      * Constructor for SecretManagerService Service.
@@ -94,42 +99,68 @@ public class SecretManagerService extends PluginService {
     @Override
     protected void install() throws InterruptedException {
         super.install();
-        // Re-initialize the sync counter every time the component is installed
-        setIsInitialSyncComplete(new CountDownLatch(1));
-        // subscribe will invoke serviceChanged right away to sync from cloud
+        // install() re-runs without an intervening shutdown() when it errors or times out, so clear any sync left
+        // over from the previous attempt. startup() reloads the cache again, so gate the cloud sync until it has.
+        synchronized (scheduleSyncFutureLockObject) {
+            cancelSync(true);
+            cacheLoaded = false;
+        }
+        // subscribe invokes serviceChanged right away, which only records the config: startup() starts the sync
         this.config.lookupTopics(CONFIGURATION_CONFIG_KEY).subscribe(this.handleConfigurationChangeLambda);
         // Re-initialize the cloud thread pool for ipc async request processing
         secretManagerIPCAgent.setCloudCallThreadPool(config);
     }
 
+    private void cancelSync(boolean interrupt) {
+        if (syncFuture != null) {
+            syncFuture.cancel(interrupt);
+            syncFuture = null;
+        }
+    }
+
     private void serviceChanged() {
         synchronized (scheduleSyncFutureLockObject) {
-            if (scheduledSyncFuture != null) {
-                scheduledSyncFuture.cancel(false);
-                scheduledSyncFuture = null;
+            cancelSync(false);
+            if (!cacheLoaded) {
+                // startup() starts the sync itself once the cache is loaded, using the latest configuration
+                return;
             }
-            long refreshIntervalSeconds = (long) (Coerce.toDouble(
-                    this.config.lookupTopics(CONFIGURATION_CONFIG_KEY).findOrDefault(0, PERIODIC_REFRESH_INTERVAL_MIN))
-                    * 60);
-            Runnable syncSecrets = () -> {
+            scheduleSyncFromCloud();
+        }
+    }
+
+    /**
+     * Start syncing secrets from cloud using the currently configured refresh interval. An interval of zero or less
+     * means sync once; anything else schedules a periodic sync. Must be called holding scheduleSyncFutureLockObject,
+     * with any previously scheduled sync already cancelled.
+     */
+    private void scheduleSyncFromCloud() {
+        long refreshIntervalSeconds = (long) (Coerce.toDouble(
+                this.config.lookupTopics(CONFIGURATION_CONFIG_KEY).findOrDefault(0, PERIODIC_REFRESH_INTERVAL_MIN))
+                * 60);
+        Runnable syncSecrets = () -> {
+            try {
                 secretManager.syncFromCloud();
-                isInitialSyncComplete.countDown();
-            };
-            if (refreshIntervalSeconds <= 0) {
-                // Refresh secrets only once and return
-                syncSecrets.run();
-            } else {
-                // Schedule syncing secrets at configured intervals
-                scheduledSyncFuture = ses.scheduleAtFixedRate(() -> {
-                    try {
-                        syncSecrets.run();
-                    } catch (Exception ex) {
-                        // Scheduler future will not run scheduled tasks if one of them is completed with an exception.
-                        // This is to ensure that unknown exceptions are also caught so the scheduler keeps on running
-                        logger.atError().cause(ex).log("Unable to sync configured secrets from cloud");
-                    }
-                }, 0, refreshIntervalSeconds, TimeUnit.SECONDS);
+            } catch (RuntimeException e) {
+                if (Thread.currentThread().isInterrupted()) {
+                    // Cancelled by shutdown or reinstall, not a failure
+                    logger.atDebug().cause(e).log("Interrupted while syncing secrets from cloud");
+                    return;
+                }
+                // Secret manager handles and logs the failures another pass can recover from: an unreachable cloud,
+                // an unparseable configuration, a corrupt local store. Anything that reaches here is not one of
+                // those, and retrying will not clear it, so error the service rather than quietly serving whatever
+                // happens to be cached.
+                serviceErrored(e);
             }
+        };
+
+        if (refreshIntervalSeconds <= 0) {
+            // Refresh secrets only once and return
+            syncFuture = ses.submit(syncSecrets);
+        } else {
+            // Schedule syncing secrets at configured intervals
+            syncFuture = ses.scheduleAtFixedRate(syncSecrets, 0, refreshIntervalSeconds, TimeUnit.SECONDS);
         }
     }
 
@@ -137,10 +168,7 @@ public class SecretManagerService extends PluginService {
     protected void shutdown() {
         logger.atDebug().log("Shutting down secrets manager");
         synchronized (scheduleSyncFutureLockObject) {
-            if (scheduledSyncFuture != null) {
-                scheduledSyncFuture.cancel(true);
-                scheduledSyncFuture = null;
-            }
+            cancelSync(true);
         }
         logger.atDebug().log("Done shutting down secrets manager");
     }
@@ -163,9 +191,11 @@ public class SecretManagerService extends PluginService {
 
     @Override
     public void startup() throws InterruptedException {
-        // Wait for the initial sync to complete before marking ourselves as running.
-        // This will throw timeout exception as startup has default timeout of 2 minutes.
-        isInitialSyncComplete.await();
+        // Load the cache from the local store, then start the cloud sync and mark ourselves RUNNING. RUNNING means we
+        // are accepting requests, not that every secret is current: the cloud download runs in the background and
+        // must not delay startup. Starting the sync here, rather than from the config subscription in install(), is
+        // what guarantees a download never races the reload below.
+
         // GG_NEEDS_REVIEW: TODO: Modify secret service to only provide interface to deal with downloaded
         // secrets during download phase.
 
@@ -183,6 +213,12 @@ public class SecretManagerService extends PluginService {
         } catch (Exception e) {
             // Put the service in ERRORED state if something unexpected happens. This should never happen.
             serviceErrored(e);
+        }
+        synchronized (scheduleSyncFutureLockObject) {
+            // Cancel the sync from a previous startup: startup() re-runs without install() when it errors
+            cancelSync(false);
+            cacheLoaded = true;
+            scheduleSyncFromCloud();
         }
         reportState(State.RUNNING);
     }
